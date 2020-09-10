@@ -9,8 +9,6 @@ import numpy as np
 from datetime import datetime
 import statistics as stats
 from sklearn import linear_model
-from sklearn.preprocessing import PolynomialFeatures
-import math
 import pandas as pd
 
 
@@ -214,7 +212,7 @@ class Ankle:
                  output_dir=None, rvo2=None, age=None, bmi=1, epoch_len=15,
                  start_offset=0, end_offset=0,
                  remove_baseline=False, ecg_object=None,
-                 from_processed=True, treadmill_log_file=None,
+                 from_processed=True, treadmill_log_file=None, treadmill_regression_file=None,
                  processed_folder=None, write_results=False):
 
         print()
@@ -241,7 +239,7 @@ class Ankle:
         self.from_processed = from_processed
         self.processed_folder = processed_folder
         self.treadmill_log_file = treadmill_log_file
-        self.treadmill_complete = True
+        self.treadmill_regression_file = treadmill_regression_file
         self.write_results = write_results
 
         # Loads raw accelerometer data and generates timestamps
@@ -297,7 +295,7 @@ class Ankle:
                     width=15, edgecolor='black', color='grey', alpha=0.75, align="edge")
             ax2.set_ylabel("Counts per {}s".format(self.epoch_len))
 
-            ax2.axhline(y=self.model.linear_dict["Meaningful threshold"], label="33%PrefSpeed", linestyle='dashed',
+            ax2.axhline(y=self.model.regression_dict["Meaningful threshold"], label="33%PrefSpeed", linestyle='dashed',
                         color='red')
             ax2.axhline(y=self.treadmill.avg_walk_counts[2], label="PrefSpeed", linestyle='dashed',
                         color='green')
@@ -326,17 +324,17 @@ class Ankle:
             plt.axvline(x=self.treadmill.avg_walk_counts[2], linestyle='dashed',
                         color='black', label="33% preferred speed")
 
-            plt.fill_betweenx(x1=0, x2=self.model.linear_dict["Light counts"], y=[0, 1],
+            plt.fill_betweenx(x1=0, x2=self.model.regression_dict["Light counts"], y=[0, 1],
                               color='grey', alpha=0.35, label="Sedentary")
 
-            plt.fill_betweenx(x1=self.model.linear_dict["Light counts"], x2=self.model.linear_dict["Moderate counts"],
+            plt.fill_betweenx(x1=self.model.regression_dict["Light counts"], x2=self.model.regression_dict["Moderate counts"],
                               y=[0, 1], color='green', alpha=0.35, label="Light")
 
-            plt.fill_betweenx(x1=self.model.linear_dict["Moderate counts"],
-                              x2=self.model.linear_dict["Vigorous counts"],
+            plt.fill_betweenx(x1=self.model.regression_dict["Moderate counts"],
+                              x2=self.model.regression_dict["Vigorous counts"],
                               y=[0, 1], color='orange', alpha=0.35, label="Moderate")
 
-            plt.fill_betweenx(x1=self.model.linear_dict["Vigorous counts"], x2=max(self.epoch.svm),
+            plt.fill_betweenx(x1=self.model.regression_dict["Vigorous counts"], x2=max(self.epoch.svm),
                               y=[0, 1], color='red', alpha=0.35, label="Vigorous")
         except AttributeError:
             pass
@@ -378,11 +376,14 @@ class Treadmill:
         self.log_file = ankle_object.treadmill_log_file
         self.epoch_data = ankle_object.epoch.svm
         self.epoch_timestamps = ankle_object.epoch.timestamps
+        self.epoch_len = ankle_object.epoch_len
+        self.filename = ankle_object.filename
         self.walk_indexes = []
         self.valid_data = False
+        self.equation_found = False
 
         # Creates treadmill dictionary and walk speed data from spreadsheet data
-        self.treadmill_dict, self.walk_speeds, self.walk_indexes = self.import_log()
+        self.treadmill_dict, self.walk_speeds, self.walk_indexes, self.df = self.import_log()
 
         self.avg_walk_counts = self.calculate_average_tm_counts()
 
@@ -390,59 +391,82 @@ class Treadmill:
         """Retrieves treadmill protocol information from spreadsheet for correct subject:
            -Protocol start time, walking speeds in m/s, data index that corresponds to start of protocol"""
 
-        # Reads in relevant treadmill protocol details
         if self.log_file is not None:
 
-            log = np.loadtxt(fname=self.log_file, delimiter=",", dtype="str",
-                             usecols=(0, 3, 6, 9, 11, 13, 15, 17, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31), skiprows=1)
+            if ".csv" in self.log_file:
+                log = pd.read_csv(self.log_file, usecols=['SUBJECT', 'DATE', 'START_TIME', '60%_SPEED',
+                                                          '80%_SPEED', 'PREF_SPEED', '120%_SPEED', '140%_SPEED',
+                                                          'Walk1Start', 'Walk1End', 'Walk2Start', 'Walk2End',
+                                                          'Walk3Start', 'Walk3End', 'Walk4Start', 'Walk4End',
+                                                          'Walk5Start', 'Walk5End',
+                                                          'Walk1Counts', 'Walk2Counts', 'Walk3Counts',
+                                                          'Walk4Counts', 'Walk5Counts',
+                                                          'Slope', 'Y_int', 'r2'])
+            if ".xlsx" in self.log_file:
+                log = pd.read_excel(self.log_file, usecols=['SUBJECT', 'DATE', 'START_TIME', '60%_SPEED',
+                                                            '80%_SPEED', 'PREF_SPEED', '120%_SPEED', '140%_SPEED',
+                                                            'Walk1Start', 'Walk1End', 'Walk2Start', 'Walk2End',
+                                                            'Walk3Start', 'Walk3End', 'Walk4Start', 'Walk4End',
+                                                            'Walk5Start', 'Walk5End',
+                                                            'Walk1Counts', 'Walk2Counts', 'Walk3Counts',
+                                                            'Walk4Counts', 'Walk5Counts','Slope', 'Y_int', 'r2'])
 
-            for row in log:
-                # Only retrieves information for correct subject since all participants in one spreadsheet
-                if str(self.subject_id) in row[0]:
-                    self.valid_data = True  # Data was found
-                    date = row[1][0:4] + "/" + str(row[1][4:7]).title() + "/" + row[1][7:] + " " + row[2]
-                    date_formatted = (datetime.strptime(date, "%Y/%b/%d %H:%M"))
+            df = log.loc[log["SUBJECT"] == self.filename.split("_0")[0]]
 
-                    try:
-                        for i, stamp in enumerate(self.epoch_timestamps):
-                            if stamp < date_formatted:
-                                epoch_start_index = i
-                                break
-                    except TypeError:
-                        epoch_start_index = "N/A"
+            if df.shape[0] == 1:
+                self.valid_data = True
 
-                    # Stores data and treadmill speeds (m/s) as dictionary
-                    treadmill_dict = {"File": row[0], "ProtocolTime": date_formatted,
-                                      "StartIndex": epoch_start_index,
-                                      "60%": float(row[3]), "80%": float(row[4]),
-                                      "100%": float(row[5]), "120%": float(row[6]),
-                                      "140%": float(row[7])}
+                # Formats treadmill protocol start time
+                date = df['DATE'].iloc[0][0:4] + "/" + str(df['DATE'].iloc[0][4:7]).title() + "/" + \
+                       df["DATE"].iloc[0][7:] + " " + df["START_TIME"].iloc[0]
+                date_formatted = (datetime.strptime(date, "%Y/%b/%d %H:%M"))
 
-                    # Same information as above; easier to access
-                    walk_speeds = [treadmill_dict["60%"], treadmill_dict["80%"],
-                                   treadmill_dict["100%"], treadmill_dict["120%"], treadmill_dict["140%"]]
+                # Finds approximate start index for treadmill protocol (epoched data)
+                epoch_start_index = int((date_formatted - self.epoch_timestamps[0]).total_seconds() / self.epoch_len)
 
-                    try:
-                        walk_indexes = [int(row[i]) for i in range(8, len(row))]
-                        print("\n" + "Previous processed treadmill data found. Skipping processing.")
-                    except ValueError:
-                        walk_indexes = []
-                        print("\n" + "No previous treadmill processing found. ")
-                        pass
+                # Stores data and treadmill speeds (m/s) as dictionary
+                treadmill_dict = {"File": df['SUBJECT'].iloc[0], "ProtocolTime": date_formatted,
+                                  "StartIndex": epoch_start_index,
+                                  "60%": float(df['60%_SPEED']), "80%": float(df["80%_SPEED"]),
+                                  "100%": float(df["PREF_SPEED"]), "120%": float(df["120%_SPEED"]),
+                                  "140%": float(df["140%_SPEED"]), "Slope": None, "Y_int": None, "r2": None}
+
+                # Same information as above; easier to access
+                walk_speeds = [treadmill_dict["60%"], treadmill_dict["80%"],
+                               treadmill_dict["100%"], treadmill_dict["120%"], treadmill_dict["140%"]]
+
+                try:
+                    colnames = [i for i in df.columns]
+                    walk_indexes = [df[col_name].iloc[0] for col_name in colnames[8:18]]
+                    print("\n" + "Previous processed treadmill data found. Skipping processing.")
+                except ValueError:
+                    walk_indexes = []
+                    print("\n" + "No previous treadmill processing found. ")
+                    pass
+
+                # Retrieves regression equation data if available
+                values = df[["Walk1Counts", "Walk2Counts", "Walk3Counts", "Walk4Counts", "Walk5Counts",
+                             "Slope", "Y_int", "r2"]].values
+
+                if True not in np.isnan(values):
+                    self.equation_found = True
+
+                    treadmill_dict["Slope"] = df["Slope"].iloc[0]
+                    treadmill_dict["Y_int"] = df["Y_int"].iloc[0]
+                    treadmill_dict["r2"] = df["r2"].iloc[0]
 
         # Sets treadmill_dict, walk_indexes and walk_speeds to empty objects if no treadmill data found in log
-        if self.log_file is None:
+        if self.log_file is None or df.shape[0] == 0:
             treadmill_dict = {"File": "N/A", "ProtocolTime": "N/A",
                               "StartIndex": "N/A",
-                              "60%": "N/A", "80%": "N/A",
-                              "100%": "N/A", "120%": "N/A",
-                              "140%": "N/A"}
+                              "60%": "N/A", "80%": "N/A", "100%": "N/A", "120%": "N/A", "140%": "N/A",
+                              "Slope": None, "Y_int": None, "r2": None}
             walk_indexes = []
             walk_speeds = []
 
             print("\nParticipant did not perform individual treadmill protocol. Using group-level regression.")
 
-        return treadmill_dict, walk_speeds, walk_indexes
+        return treadmill_dict, walk_speeds, walk_indexes, df
 
     def plot_treadmill_protocol(self, ankle_object, show_highlights=True):
         """Plots raw and epoched data during treadmill protocol on subplots or
@@ -541,12 +565,18 @@ class Treadmill:
         -avg_walk_count: I bet you can figure this one out on your own
         """
 
-        try:
-            avg_walk_count = [round(stats.mean(self.epoch_data[self.walk_indexes[index]:self.walk_indexes[index+1]]), 2)
-                              for index in np.arange(0, len(self.walk_indexes), 2)]
+        if not self.equation_found:
+            try:
+                avg_walk_count = [round(stats.mean(self.epoch_data[self.walk_indexes[index]:
+                                                                   self.walk_indexes[index+1]]), 2)
+                                  for index in np.arange(0, len(self.walk_indexes), 2)]
 
-        except IndexError:
-            avg_walk_count = [0, 0, 0, 0, 0]
+            except IndexError:
+                avg_walk_count = [0, 0, 0, 0, 0]
+
+        if self.equation_found:
+            avg_walk_count = [self.df["Walk1Counts"], self.df["Walk2Counts"], self.df["Walk3Counts"],
+                              self.df["Walk4Counts"], self.df["Walk5Counts"]]
 
         return avg_walk_count
 
@@ -598,7 +628,7 @@ class AnkleModel:
             # Adds average count data to self.tm_object since it has to be run in a weird order
             self.calculate_average_tm_counts()
 
-        self.linear_dict, self.linear_speed = self.calculate_regression()
+        self.regression_dict, self.linear_speed = self.calculate_regression()
 
         self.predicted_mets, self.epoch_intensity, \
             self.intensity_totals = self.calculate_intensity(self.linear_speed)
@@ -627,17 +657,26 @@ class AnkleModel:
 
         # INDIVIDUAL REGRESSION ---------------------------------------------------------------------------------------
         if self.tm_object.valid_data:
-            # Reshapes data to work with
-            counts = np.array(self.tm_object.avg_walk_counts).reshape(-1, 1)
-            speed = np.array(self.tm_object.walk_speeds).reshape(-1, 1)  # m/s
+            regression_type = "Individual"
 
-            # Linear regression using sklearn
-            lm = linear_model.LinearRegression()
-            model = lm.fit(counts, speed)
-            y_intercept = lm.intercept_[0]
-            counts_coef = lm.coef_[0][0]
-            bmi_coef = 0
-            self.r2 = round(lm.score(counts, speed), 5)
+            if not self.tm_object.equation_found:
+
+                # Reshapes data to work with
+                counts = np.array(self.tm_object.avg_walk_counts).reshape(-1, 1)
+                speed = np.array(self.tm_object.walk_speeds).reshape(-1, 1)  # m/s
+
+                # Linear regression using sklearn
+                lm = linear_model.LinearRegression()
+                model = lm.fit(counts, speed)
+                y_intercept = lm.intercept_[0]
+                counts_coef = lm.coef_[0][0]
+                bmi_coef = 0
+                self.r2 = round(lm.score(counts, speed), 5)
+
+            if self.tm_object.equation_found:
+                y_intercept = self.tm_object.treadmill_dict["Y_int"]
+                counts_coef = self.tm_object.treadmill_dict["Slope"]
+                self.r2 = self.tm_object.treadmill_dict["r2"]
 
             # Threshold corresponding to a 5-second walk at preferred speed
             meaningful_threshold = round(self.tm_object.avg_walk_counts[2] / (self.epoch_len / 5), 2)
@@ -651,6 +690,8 @@ class AnkleModel:
 
             # Threshold corresponding to a 5-second walk at average walking pace (assume 1.4 m/s)
             meaningful_threshold = round((1.4 - y_intercept) / counts_coef / (self.epoch_len / 5), 2)
+
+            regression_type = "Group"
 
         # Calculates count and speed limits for different intensity levels
         light_speed = ((1.5 * self.rvo2 - self.rvo2) / 0.1) / 60  # m/s
@@ -682,7 +723,8 @@ class AnkleModel:
             if counts < meaningful_threshold:
                 above_sed_thresh.append(0)
 
-        linear_reg_dict = {"a": counts_coef, "b": y_intercept, "r2": self.r2,
+        linear_reg_dict = {"Regression Type": regression_type,
+                           "a": counts_coef, "b": y_intercept, "r2": self.r2,
                            "Light speed": round(light_speed, 3), "Light counts": light_counts,
                            "Moderate speed": round(mod_speed, 3), "Moderate counts": mod_counts,
                            "Vigorous speed": round(vig_speed, 3), "Vigorous counts": vig_counts,
@@ -692,7 +734,7 @@ class AnkleModel:
 
     def counts_to_speed(self, count, print_output=True):
 
-        speed = self.linear_dict["a"] * count + self.linear_dict["b"]
+        speed = self.regression_dict["a"] * count + self.regression_dict["b"]
 
         if print_output:
             print("-Predicted speed for {} counts is {} m/s.".format(count, round(speed, 3)))
@@ -710,17 +752,17 @@ class AnkleModel:
         min_value = np.floor(min(self.epoch_data))
         max_value = np.ceil(max(self.epoch_data))
 
-        dict = self.linear_dict
-        curve_data = [round(i * self.linear_dict["a"] + self.linear_dict["b"], 3)
+        dict = self.regression_dict
+        curve_data = [round(i * self.regression_dict["a"] + self.regression_dict["b"], 3)
                       for i in np.arange(0, max_value)]
-        predicted_max = max_value * self.linear_dict["a"] + self.linear_dict["b"]
+        predicted_max = max_value * self.regression_dict["a"] + self.regression_dict["b"]
 
         # Threshold below which counts are considered noise (100% preferred speed / 3)
-        meaningful_thresh = self.linear_dict["Meaningful threshold"]
+        meaningful_thresh = self.regression_dict["Meaningful threshold"]
 
         # Uses regression to calculate speed equivalent at meaningful threshold
         # No physiological meaning if it is derived from meaningful threshold instead of light counts
-        light_speed = self.linear_dict["Meaningful threshold"] * self.linear_dict["a"] + self.linear_dict["b"]
+        light_speed = self.regression_dict["Meaningful threshold"] * self.regression_dict["a"] + self.regression_dict["b"]
 
         min_value = 0
 
@@ -763,8 +805,9 @@ class AnkleModel:
         plt.legend(loc='upper left')
         plt.ylabel("Gait speed (m/s)")
         plt.xlabel("Counts")
-        plt.title("Participant #{}: Treadmill Protocols - " 
-                  "Counts vs. Gait Speed ({} regression)".format(self.subject_id, regression_type))
+        plt.title("Participant #{}: Treadmill Protocol - " 
+                  "Counts vs. Gait Speed ({} regression)".format(self.subject_id,
+                                                                 self.regression_dict["Regression Type"]))
         plt.show()
 
     def calculate_intensity(self, predicted_speed):
@@ -829,24 +872,29 @@ class AnkleModel:
         xfmt = mdates.DateFormatter("%a, %I:%M %p")
         locator = mdates.HourLocator(byhour=[0, 12], interval=1)
 
-        fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col')
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, sharex='col', figsize=(10, 6))
         ax1.set_title("Participant #{}: Ankle Model Data".format(self.subject_id))
 
+        # Counts
+        ax1.plot(self.epoch_timestamps[:len(self.linear_speed)], self.epoch_data[:len(self.linear_speed)],
+                 color='black')
+        ax1.set_ylabel("Counts")
+
         # Predicted speed (m/s)
-        ax1.plot(self.epoch_timestamps[:len(self.linear_speed)], self.linear_speed, color='black')
-        ax1.set_ylabel("Predicted Speed (m/s)")
+        ax2.plot(self.epoch_timestamps[:len(self.linear_speed)], self.linear_speed, color='black')
+        ax2.set_ylabel("Predicted Speed (m/s)")
 
         # Predicted METs
-        ax2.plot(self.epoch_timestamps[:len(self.predicted_mets)], self.predicted_mets, color='black')
-        ax2.axhline(y=1.5, linestyle='dashed', color='green')
-        ax2.axhline(y=3.0, linestyle='dashed', color='orange')
-        ax2.axhline(y=6.0, linestyle='dashed', color='red')
-        ax2.set_ylabel("METs")
+        ax3.plot(self.epoch_timestamps[:len(self.predicted_mets)], self.predicted_mets, color='black')
+        ax3.axhline(y=1.5, linestyle='dashed', color='green')
+        ax3.axhline(y=3.0, linestyle='dashed', color='orange')
+        ax3.axhline(y=6.0, linestyle='dashed', color='red')
+        ax3.set_ylabel("METs")
 
         # Intensity category
-        ax3.plot(self.epoch_timestamps[:len(self.epoch_intensity)], self.epoch_intensity, color='black')
-        ax3.set_ylabel("Intensity Category")
+        ax4.plot(self.epoch_timestamps[:len(self.epoch_intensity)], self.epoch_intensity, color='black')
+        ax4.set_ylabel("Intensity Category")
 
-        ax3.xaxis.set_major_formatter(xfmt)
-        ax3.xaxis.set_major_locator(locator)
+        ax4.xaxis.set_major_formatter(xfmt)
+        ax4.xaxis.set_major_locator(locator)
         plt.xticks(rotation=45, fontsize=6)

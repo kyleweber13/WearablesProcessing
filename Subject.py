@@ -5,12 +5,13 @@ import ValidData
 import ImportCropIndexes
 import HRAcc
 import DailyReports
-import Nonwear"""
+"""
 
 import ImportEDF
 import DeviceSync
 import ECG
 import Accelerometer
+import Nonwear
 
 import os
 import numpy as np
@@ -41,7 +42,8 @@ class Subject:
                  epoch_len=15, remove_epoch_baseline=False,
                  rest_hr_window=60, n_epochs_rest_hr=30, hracc_threshold=30,
                  output_dir=desktop_path, processed_folder=None,
-                 write_results=False, treadmill_log_file=None, nonwear_log_file=None,
+                 write_results=False, treadmill_log_file=None,
+                 nonwear_log_file=None,
                  demographics_file=None, sleeplog_file=None):
 
         print()
@@ -133,6 +135,9 @@ class Subject:
 
         # Sleep data
         # self.sleep = SleepData.Sleep(subject_object=self)
+
+        # Non-wear data
+        self.nonwear = Nonwear.NonwearLog(subject_object=self)  # Manually-logged
 
     def get_raw_filepaths(self):
         """Retrieves filenames associated with current subject."""
