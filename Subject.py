@@ -907,3 +907,126 @@ class Subject:
         print("Complete.")
 
         return validity_df
+
+    def plot_epoched(self, show_nonwear=True, show_sleep=True):
+
+        fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(10, 6))
+        plt.subplots_adjust(bottom=.15)
+
+        plt.suptitle("Participant {}: all available epoched data".format(self.subject_id))
+
+        # Non-wear data -----------------------------------------------------------------------------------------------
+        if show_nonwear:
+            for removal in self.nonwear.nonwear_log.itertuples():
+                # Wrist overlay
+                try:
+                    # No label if not final period
+                    if removal.Index != self.nonwear.nonwear_log.index[-1]:
+                        ax1.fill_between(x=(removal.DEVICEOFF, removal.DEVICEON), y1=0, y2=max(self.wrist.epoch.svm),
+                                         color='grey', alpha=.75)
+
+                    # Label if final period
+                    if removal.Index == self.nonwear.nonwear_log.index[-1]:
+                        ax1.fill_between(x=(removal.DEVICEOFF, removal.DEVICEON), y1=0, y2=max(self.wrist.epoch.svm),
+                                         color='grey', alpha=.75, label="Non-wear")
+
+                except TypeError:
+                    pass
+
+                # Ankle overlay
+                try:
+                    if removal.Index != self.nonwear.nonwear_log.index[-1]:
+                        ax2.fill_between(x=(removal.DEVICEOFF, removal.DEVICEON), y1=0, y2=max(self.ankle.epoch.svm),
+                                         color='grey', alpha=.75)
+                    if removal.Index == self.nonwear.nonwear_log.index[-1]:
+                        ax2.fill_between(x=(removal.DEVICEOFF, removal.DEVICEON), y1=0, y2=max(self.ankle.epoch.svm),
+                                         color='grey', alpha=.75, label='Non-wear')
+                except TypeError:
+                    pass
+
+        # Sleep data -------------------------------------------------------------------------------------------------
+        if show_sleep:
+            for i in range(self.sleep.data.shape[0] - 1):
+
+                # Wrist overlay -----------------
+                try:
+                    # No label if not final sleep
+                    if i != self.sleep.data.shape[0] - 2:
+                        ax1.fill_between(x=(self.sleep.data.iloc[i]["TIME_SLEEP"],
+                                            self.sleep.data.iloc[i + 1]["TIME_WAKE"]),
+                                         y1=0, y2=max(self.wrist.epoch.svm),
+                                         color='lightskyblue', alpha=.75)
+                    # Label if final sleep
+                    if i == self.sleep.data.shape[0] - 2:
+                        # No label if not final period
+                        ax1.fill_between(x=(self.sleep.data.iloc[i]["TIME_SLEEP"],
+                                            self.sleep.data.iloc[i + 1]["TIME_WAKE"]),
+                                         y1=0, y2=max(self.wrist.epoch.svm),
+                                         color='lightskyblue', alpha=.75, label="Overnight sleep")
+                except TypeError:
+                    pass
+
+                # Ankle overlay -----------------
+                try:
+                    # No label if not final sleep
+                    if i != self.sleep.data.shape[0] - 2:
+                        ax2.fill_between(x=(self.sleep.data.iloc[i]["TIME_SLEEP"],
+                                            self.sleep.data.iloc[i + 1]["TIME_WAKE"]),
+                                         y1=0, y2=max(self.ankle.epoch.svm),
+                                         color='lightskyblue', alpha=.75)
+                    # Label if final sleep
+                    if i == self.sleep.data.shape[0] - 2:
+                        # No label if not final period
+                        ax2.fill_between(x=(self.sleep.data.iloc[i]["TIME_SLEEP"],
+                                            self.sleep.data.iloc[i + 1]["TIME_WAKE"]),
+                                         y1=0, y2=max(self.ankle.epoch.svm),
+                                         color='lightskyblue', alpha=.75, label="Overnight sleep")
+                except TypeError:
+                    pass
+
+                # HR overlay --------------------
+                try:
+                    # No label if not final sleep
+                    if i != self.sleep.data.shape[0] - 2:
+                        ax3.fill_between(x=(self.sleep.data.iloc[i]["TIME_SLEEP"],
+                                            self.sleep.data.iloc[i + 1]["TIME_WAKE"]),
+                                         y1=min([i for i in self.ecg.valid_hr if i is not None]) * .9,
+                                         y2=max([i for i in self.ecg.valid_hr if i is not None]) * 1.1,
+                                         color='lightskyblue', alpha=.75)
+                    # Label if final sleep
+                    if i == self.sleep.data.shape[0] - 2:
+                        # No label if not final period
+                        ax3.fill_between(x=(self.sleep.data.iloc[i]["TIME_SLEEP"],
+                                            self.sleep.data.iloc[i + 1]["TIME_WAKE"]),
+                                         y1=min([i for i in self.ecg.valid_hr if i is not None]) * .9,
+                                         y2=max([i for i in self.ecg.valid_hr if i is not None]) * 1.1,
+                                         color='lightskyblue', alpha=.75)
+                except TypeError:
+                    pass
+
+        # Wrist data -------------------------------------------------------------------------------------------------
+        try:
+            ax1.plot(self.wrist.epoch.timestamps, self.wrist.epoch.svm, color='black', label="Wrist")
+        except AttributeError:
+            ax1.axhline(y=0, linestyle='dashed', color='black', label="No wrist data")
+        ax1.set_ylabel("Counts")
+        ax1.legend()
+
+        # Ankle data -------------------------------------------------------------------------------------------------
+        try:
+            ax2.plot(self.ankle.epoch.timestamps, self.ankle.epoch.svm, color='black', label="Ankle")
+        except AttributeError:
+            ax2.axhline(y=0, linestyle='dashed', color='black', label="No ankle data")
+        ax2.set_ylabel("Counts")
+        ax2.legend()
+
+        # HR data ----------------------------------------------------------------------------------------------------
+        try:
+            ax3.plot(self.ecg.epoch_timestamps, self.ecg.valid_hr, color='red', label="HR")
+        except AttributeError:
+            ax3.axhline(y=0, linestyle='dashed', color='red', label='Missing HR data')
+        ax3.set_ylabel("bpm")
+        ax3.legend()
+
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter("%a., %b. %d \n%H:%M:%S"))
+        plt.xticks(rotation=45, fontsize=9)
