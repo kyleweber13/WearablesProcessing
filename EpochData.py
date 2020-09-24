@@ -5,7 +5,8 @@ import pandas as pd
 
 class EpochAccel:
 
-    def __init__(self, raw_data=None, remove_baseline=False, from_processed=True,
+    def __init__(self, raw_data=None, raw_filename=None, proc_filepath=None,
+                 remove_baseline=False, from_processed=True,
                  processed_folder=None, accel_only=False, epoch_len=15):
 
         self.epoch_len = epoch_len
@@ -13,12 +14,9 @@ class EpochAccel:
         self.from_processed = from_processed
         self.accel_only = accel_only
         self.processed_folder = processed_folder
-        self.raw_filename = raw_data.filepath.split("/")[-1].split(".")[0]
-
-        if not self.accel_only:
-            self.processed_file = self.processed_folder + self.raw_filename + "_IntensityData.csv"
-        if self.accel_only:
-            self.processed_file = self.processed_folder + self.raw_filename + "_IntensityData_AccelOnly.csv"
+        self.raw_filename = raw_filename
+        self.proc_filepath = proc_filepath
+        self.proc_filename = proc_filepath.split("/")[-1]
 
         self.svm = []
         self.timestamps = None
@@ -75,38 +73,52 @@ class EpochAccel:
 
     def epoch_from_processed(self):
 
-        print("\n" + "Importing accelerometer-only data processed from {}.".format(self.processed_folder))
+        print("\n" + "Importing processed accelerometer from {}.".format(self.processed_folder))
 
         # Wrist accelerometer ----------------------------------------------------------------------------------------
-        if "Wrist" in self.processed_file:
+        if "Wrist" in self.proc_filename:
 
-            if self.processed_file.split(".")[-1] == "csv":
-                df_wrist = pd.read_csv(self.processed_file)
+            # Reads in correct file
+            if self.proc_filename.split(".")[-1] == "csv":
+                df_wrist = pd.read_csv(self.proc_filepath)
 
-            if self.processed_file.split(".")[-1] == "xlsx":
-                df_wrist = pd.read_excel(self.processed_file)
+            if self.proc_filename.split(".")[-1] == "xlsx":
+                df_wrist = pd.read_excel(self.proc_filepath)
 
-            df_wrist["Timestamp"] = pd.to_datetime(df_wrist["Timestamp"])
+            # Timestamp formatting: files have been generated using different packages over the project
+            if type(df_wrist["Timestamp"].iloc[0]) is str:
+                self.timestamps = pd.to_datetime(df_wrist["Timestamp"], format="%Y-%m-%d %H:%M:%S.%f")
 
-            self.timestamps = [datetime.strftime(i, "%Y-%m-%d %H:%M:%S.%f") for i in df_wrist["Timestamp"]]
-            self.timestamps = [datetime.strptime(i, "%Y-%m-%d %H:%M:%S.%f") for i in self.timestamps]
+            if type(df_wrist["Timestamp"].iloc[0]) is not str:
+                self.timestamps = [datetime.strftime(i, "%Y-%m-%d %H:%M:%S.%f") for i in df_wrist["Timestamp"]]
+                self.timestamps = [datetime.strptime(i, "%Y-%m-%d %H:%M:%S.%f") for i in self.timestamps]
 
             self.epoch_len = (self.timestamps[1] - self.timestamps[0]).seconds
             self.svm = [round(float(i), 2) for i in df_wrist["ActivityCount"]]
 
         # Ankle accelerometer ----------------------------------------------------------------------------------------
 
-        if "Ankle" in self.processed_file:
-            if self.processed_file.split(".")[-1] == "csv":
-                df_ankle = pd.read_csv(self.processed_file)
+        if "Ankle" in self.proc_filename:
+            if self.proc_filename.split(".")[-1] == "csv":
+                df_ankle = pd.read_csv(self.proc_filepath)
 
-            if self.processed_file.split(".")[-1] == "xlsx":
-                df_ankle = pd.read_excel(self.processed_file)
+            if self.proc_filename.split(".")[-1] == "xlsx":
+                df_ankle = pd.read_excel(self.proc_filepath)
 
             df_ankle["Timestamp"] = pd.to_datetime(df_ankle["Timestamp"])
 
             self.timestamps = [datetime.strftime(i, "%Y-%m-%d %H:%M:%S.%f") for i in df_ankle["Timestamp"]]
             self.timestamps = [datetime.strptime(i, "%Y-%m-%d %H:%M:%S.%f") for i in self.timestamps]
+
+            """
+            # Timestamp formatting: files have been generated using different packages over the project
+            if type(df_wrist["Timestamp"].iloc[0]) is str:
+                self.timestamps = pd.to_datetime(df_wrist["Timestamp"], format="%Y-%m-%d %H:%M:%S.%f")
+
+            if type(df_wrist["Timestamp"].iloc[0]) is not str:
+                self.timestamps = [datetime.strftime(i, "%Y-%m-%d %H:%M:%S.%f") for i in df_wrist["Timestamp"]]
+                self.timestamps = [datetime.strptime(i, "%Y-%m-%d %H:%M:%S.%f") for i in self.timestamps]
+            """
 
             self.epoch_len = (self.timestamps[1] - self.timestamps[0]).seconds
             self.svm = [float(i) for i in df_ankle["ActivityCount"]]

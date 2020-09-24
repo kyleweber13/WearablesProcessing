@@ -8,7 +8,6 @@ from matplotlib.ticker import PercentFormatter
 import numpy as np
 from datetime import datetime
 import statistics as stats
-from sklearn import linear_model
 import pandas as pd
 
 
@@ -19,7 +18,8 @@ import pandas as pd
 
 class Wrist:
 
-    def __init__(self, subject_id=None, filepath=None, temperature_filepath=None,
+    def __init__(self, subject_id=None, raw_filepath=None, proc_filepath=None, filename=None,
+                 temperature_filepath=None,
                  output_dir=None, load_raw=False, accel_only=False,
                  epoch_len=15, start_offset=0, end_offset=0, ecg_object=None,
                  from_processed=True, processed_folder=None, write_results=False):
@@ -28,9 +28,10 @@ class Wrist:
         print("======================================== WRIST ACCELEROMETER ========================================")
 
         self.subject_id = subject_id
-        self.filepath = filepath
+        self.filepath = raw_filepath
+        self.proc_filepath = proc_filepath
         self.temperature_filepath = temperature_filepath
-        self.filename = self.filepath.split("/")[-1].split(".")[0]
+        self.filename = filename
         self.output_dir = output_dir
 
         self.load_raw = load_raw
@@ -51,8 +52,9 @@ class Wrist:
                                        start_offset=self.start_offset, end_offset=self.end_offset,
                                        load_raw=self.load_raw)
 
-        self.epoch = EpochData.EpochAccel(raw_data=self.raw, accel_only=self.accel_only, epoch_len=self.epoch_len,
-                                          from_processed=self.from_processed, processed_folder=processed_folder)
+        self.epoch = EpochData.EpochAccel(raw_data=self.raw, proc_filepath=self.proc_filepath,
+                                          accel_only=self.accel_only, epoch_len=self.epoch_len,
+                                          from_processed=self.from_processed, processed_folder=self.processed_folder)
 
         # Model
         self.model = WristModel(accel_object=self, ecg_object=self.ecg_object)
@@ -208,7 +210,8 @@ class WristModel:
 
 class Ankle:
 
-    def __init__(self, subject_id=None, filepath=None, load_raw=False, accel_only=False,
+    def __init__(self, subject_id=None, raw_filepath=None, proc_filepath=None,
+                 filename=None, load_raw=False, accel_only=False,
                  output_dir=None, rvo2=None, age=None, bmi=1, epoch_len=15,
                  start_offset=0, end_offset=0,
                  remove_baseline=False, ecg_object=None,
@@ -219,8 +222,9 @@ class Ankle:
         print("======================================== ANKLE ACCELEROMETER ========================================")
 
         self.subject_id = subject_id
-        self.filepath = filepath
-        self.filename = self.filepath.split("/")[-1].split(".")[0]
+        self.filepath = raw_filepath
+        self.filename = filename
+        self.proc_filepath = proc_filepath
         self.load_raw = load_raw
         self.accel_only = accel_only
         self.output_dir = output_dir
@@ -247,9 +251,11 @@ class Ankle:
                                        start_offset=self.start_offset, end_offset=self.end_offset,
                                        load_raw=self.load_raw)
 
-        self.epoch = EpochData.EpochAccel(raw_data=self.raw, epoch_len=self.epoch_len,
+        self.epoch = EpochData.EpochAccel(raw_data=self.raw,
+                                          proc_filepath=self.proc_filepath,
+                                          epoch_len=self.epoch_len,
                                           remove_baseline=self.remove_baseline, accel_only=self.accel_only,
-                                          from_processed=self.from_processed, processed_folder=processed_folder)
+                                          from_processed=self.from_processed, processed_folder=self.processed_folder)
 
         # Create Treadmill object
         self.treadmill = Treadmill(ankle_object=self)
@@ -260,86 +266,6 @@ class Ankle:
 
         if self.write_results:
             self.write_model()
-
-    def plot_raw_over_epoch(self, day, downsample=3):
-        """Creates a plot of two subplots with vector magnitude (raw) and epoched data."""
-
-        fig, (ax1, ax2) = plt.subplots(2, sharex="col", figsize=(10, 7))
-
-        try:
-            indexes = np.arange(self.raw.sample_rate * (day - 1) * 86400, self.raw.sample_rate * day * 86400)
-
-            ax1.plot(indexes[::downsample] / self.raw.sample_rate,
-                     self.raw.x[self.raw.sample_rate * (day - 1) * 86400:
-                                self.raw.sample_rate * day * 86400:
-                                downsample],
-                     color='black', label="X-axis ({}Hz)".format(round(self.raw.sample_rate / downsample), 1))
-
-            ax1.legend(loc='upper left')
-
-        except TypeError:
-            pass
-
-        ax1.set_ylabel("Vector Magnitude (G)")
-
-        try:
-
-            epoch_start = int((day - 1) * 86400 / self.epoch_len)
-            epoch_end = epoch_start + int(86400 / self.epoch_len)
-
-            indexes = np.arange(epoch_start, epoch_end)
-            if indexes[-1] > len(self.epoch.svm):
-                indexes = np.arange(epoch_start, len(self.epoch.svm))
-
-            ax2.bar(indexes * self.epoch_len, self.epoch.svm[epoch_start:epoch_end],
-                    width=15, edgecolor='black', color='grey', alpha=0.75, align="edge")
-            ax2.set_ylabel("Counts per {}s".format(self.epoch_len))
-
-            ax2.axhline(y=self.model.regression_dict["Meaningful threshold"], label="33%PrefSpeed", linestyle='dashed',
-                        color='red')
-            ax2.axhline(y=self.treadmill.avg_walk_counts[2], label="PrefSpeed", linestyle='dashed',
-                        color='green')
-
-            ax2.legend(loc='upper left')
-
-        except (TypeError, AttributeError):
-            pass
-
-        ax2.set_xlabel("Seconds")
-        plt.title("Vector Magnitude and Epoched Data - Day {}".format(day))
-
-    def plot_epoch_hist(self, bin_size=25):
-        """Plots histogram of epoched activity counts with adjustable bin size."""
-
-        bin_list = np.arange(0, max(self.epoch.svm), bin_size)
-
-        plt.hist(x=self.epoch.svm, bins=bin_list, weights=np.ones(len(self.epoch.svm)) / len(self.epoch.svm),
-                 edgecolor='black', color='grey', label="Histogram (bin={})".format(bin_size))
-        plt.xlabel("Counts")
-        plt.ylabel("% Total Epochs")
-        plt.title("Participant {}: Ankle Activity Count Histogram".format(self.subject_id))
-        plt.gca().yaxis.set_major_formatter(PercentFormatter(1))
-
-        try:
-            plt.axvline(x=self.treadmill.avg_walk_counts[2], linestyle='dashed',
-                        color='black', label="33% preferred speed")
-
-            plt.fill_betweenx(x1=0, x2=self.model.regression_dict["Light counts"], y=[0, 1],
-                              color='grey', alpha=0.35, label="Sedentary")
-
-            plt.fill_betweenx(x1=self.model.regression_dict["Light counts"], x2=self.model.regression_dict["Moderate counts"],
-                              y=[0, 1], color='green', alpha=0.35, label="Light")
-
-            plt.fill_betweenx(x1=self.model.regression_dict["Moderate counts"],
-                              x2=self.model.regression_dict["Vigorous counts"],
-                              y=[0, 1], color='orange', alpha=0.35, label="Moderate")
-
-            plt.fill_betweenx(x1=self.model.regression_dict["Vigorous counts"], x2=max(self.epoch.svm),
-                              y=[0, 1], color='red', alpha=0.35, label="Vigorous")
-        except AttributeError:
-            pass
-
-        plt.legend(loc='upper right')
 
     def write_model(self):
 
@@ -409,7 +335,7 @@ class Treadmill:
                                                             'Walk3Start', 'Walk3End', 'Walk4Start', 'Walk4End',
                                                             'Walk5Start', 'Walk5End',
                                                             'Walk1Counts', 'Walk2Counts', 'Walk3Counts',
-                                                            'Walk4Counts', 'Walk5Counts','Slope', 'Y_int', 'r2'])
+                                                            'Walk4Counts', 'Walk5Counts', 'Slope', 'Y_int', 'r2'])
 
             df = log.loc[log["SUBJECT"] == self.filename.split("_0")[0]]
 
@@ -421,12 +347,8 @@ class Treadmill:
                        df["DATE"].iloc[0][7:] + " " + df["START_TIME"].iloc[0]
                 date_formatted = (datetime.strptime(date, "%Y/%b/%d %H:%M"))
 
-                # Finds approximate start index for treadmill protocol (epoched data)
-                epoch_start_index = int((date_formatted - self.epoch_timestamps[0]).total_seconds() / self.epoch_len)
-
                 # Stores data and treadmill speeds (m/s) as dictionary
                 treadmill_dict = {"File": df['SUBJECT'].iloc[0], "ProtocolTime": date_formatted,
-                                  "StartIndex": epoch_start_index,
                                   "60%": float(df['60%_SPEED']), "80%": float(df["80%_SPEED"]),
                                   "100%": float(df["PREF_SPEED"]), "120%": float(df["120%_SPEED"]),
                                   "140%": float(df["140%_SPEED"]), "Slope": None, "Y_int": None, "r2": None}
@@ -457,6 +379,8 @@ class Treadmill:
 
         # Sets treadmill_dict, walk_indexes and walk_speeds to empty objects if no treadmill data found in log
         if self.log_file is None or df.shape[0] == 0:
+            df = None
+
             treadmill_dict = {"File": "N/A", "ProtocolTime": "N/A",
                               "StartIndex": "N/A",
                               "60%": "N/A", "80%": "N/A", "100%": "N/A", "120%": "N/A", "140%": "N/A",
@@ -602,7 +526,7 @@ class AnkleModel:
         self.epoch_timestamps = ankle_object.epoch.timestamps
         self.subject_id = ankle_object.subject_id
         self.filepath = ankle_object.filepath
-        self.filename = ankle_object.filepath.split("/")[-1].split(".")[0]
+        self.filename = ankle_object.filename
         self.bmi = bmi
         self.rvo2 = ankle_object.rvo2
         self.tm_object = ankle_object.treadmill
@@ -649,9 +573,13 @@ class AnkleModel:
     def calculate_average_tm_counts(self):
         """Calculates average activity count total for each treadmill walk."""
 
-        self.tm_object.avg_walk_counts = [round(stats.mean(self.epoch_data[self.walk_indexes[index]:
-                                                                           self.walk_indexes[index + 1]]), 2)
-                                          for index in np.arange(0, 10, 2)]
+        if self.walk_indexes[-1] <= len(self.epoch_data):
+            self.tm_object.avg_walk_counts = [round(stats.mean(self.epoch_data[self.walk_indexes[index]:
+                                                                               self.walk_indexes[index + 1]]), 2)
+                                              for index in np.arange(0, 10, 2)]
+        if self.walk_indexes[-1] > len(self.epoch_data):
+            self.tm_object.avg_walk_counts = [None for i in range(5)]
+            self.tm_object.valid_data = False
 
     def calculate_regression(self):
 
