@@ -237,7 +237,7 @@ class ECG:
         plt.legend(loc='upper left')
         plt.show()
 
-    def plot_qc_segment(self, input_index=None):
+    def plot_qc_segment(self, input_index=None, template_data='filtered', plot_steps=True, plot_template=False):
         """Method that generates a random 10-minute sample of data. Overlays filtered data with quality check output.
 
         :argument
@@ -262,7 +262,8 @@ class ECG:
         seconds_seq_raw = np.arange(0, self.epoch_len * self.sample_rate) / self.sample_rate
 
         # Epoch's quality check
-        validity_data = CheckQuality(ecg_object=self, start_index=start_index, epoch_len=self.epoch_len)
+        validity_data = CheckQuality(ecg_object=self, start_index=start_index,
+                                     epoch_len=self.epoch_len, template_data=template_data)
 
         print()
         print("Valid HR: {} (passed {}/5 conditions)".format(validity_data.rule_check_dict["Valid Period"],
@@ -284,42 +285,47 @@ class ECG:
                                                validity_data.rule_check_dict["Correlation Valid"]))
 
         # Plot
-        plt.close("all")
 
-        fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(10, 7))
+        if plot_template:
+            plt.close("all")
 
-        valid_period = "Valid" if validity_data.rule_check_dict["Valid Period"] else "Invalid"
+            fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(10, 7))
 
-        ax1.set_title("Participant {}: {} (index = {})".format(self.subject_id, valid_period, start_index))
+            valid_period = "Valid" if validity_data.rule_check_dict["Valid Period"] else "Invalid"
 
-        # Filtered ECG data
-        ax1.plot(seconds_seq_raw, self.raw[start_index:end_index], color='black', label="Raw ECG")
-        ax1.set_ylabel("Voltage")
-        ax1.legend(loc='upper left')
+            ax1.set_title("Participant {}: {} (index = {})".format(self.subject_id, valid_period, start_index))
 
-        # Wavelet data
-        ax2.plot(np.arange(0, len(validity_data.wavelet)) / self.sample_rate, validity_data.wavelet,
-                 color='green', label="Wavelet")
-        ax2.plot(validity_data.r_peaks / self.sample_rate,
-                 [validity_data.wavelet[peak] for peak in validity_data.r_peaks],
-                 linestyle="", marker="x", color='black')
-        ax2.set_ylabel("Voltage")
-        ax2.legend()
+            # Filtered ECG data
+            ax1.plot(seconds_seq_raw, self.raw[start_index:end_index], color='black', label="Raw ECG")
+            ax1.set_ylabel("Voltage")
+            ax1.legend(loc='upper left')
 
-        for peak in validity_data.removed_peak:
-            ax2.plot(np.arange(0, len(validity_data.wavelet))[peak] / self.sample_rate,
-                     validity_data.wavelet[peak], marker="x", color='red')
+            # Wavelet data
+            ax2.plot(np.arange(0, len(validity_data.wavelet)) / self.sample_rate, validity_data.wavelet,
+                     color='green', label="Wavelet")
+            ax2.plot(validity_data.r_peaks / self.sample_rate,
+                     [validity_data.wavelet[peak] for peak in validity_data.r_peaks],
+                     linestyle="", marker="x", color='black')
+            ax2.set_ylabel("Voltage")
+            ax2.legend()
 
-        for i, window in enumerate(validity_data.ecg_windowed):
-            ax3.plot(np.arange(0, len(window))/self.sample_rate, window, color='black')
+            for peak in validity_data.removed_peak:
+                ax2.plot(np.arange(0, len(validity_data.wavelet))[peak] / self.sample_rate,
+                         validity_data.wavelet[peak], marker="x", color='red')
 
-        ax3.plot(np.arange(0, len(validity_data.average_qrs))/self.sample_rate, validity_data.average_qrs,
-                 label="QRS template (r={})".format(validity_data.average_r),
-                 color='red', linestyle='dashed')
+            for i, window in enumerate(validity_data.ecg_windowed):
+                ax3.plot(np.arange(0, len(window)) / self.sample_rate, window, color='black')
 
-        ax3.legend()
-        ax3.set_ylabel("Voltage")
-        ax3.set_xlabel("Seconds")
+            ax3.plot(np.arange(0, len(validity_data.average_qrs)) / self.sample_rate, validity_data.average_qrs,
+                     label="QRS template ({} data; r={})".format(template_data, validity_data.average_r),
+                     color='red', linestyle='dashed')
+
+            ax3.legend()
+            ax3.set_ylabel("Voltage")
+            ax3.set_xlabel("Seconds")
+
+        if plot_steps:
+            validity_data.plot_steps(start_index=start_index)
 
         return validity_data
 
@@ -669,6 +675,45 @@ class CheckQuality:
             sd = np.std(self.ecg_object.accel_vm[accel_start:accel_end])
             self.rule_check_dict["Accel SD"] = sd
 
+    def plot_steps(self, start_index=None):
+
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, sharex="col", figsize=(10, 6))
+        plt.suptitle("ECG Quality Check Processing Steps "
+                     "(Index = {}; {} period)".format(start_index, "Valid" if self.valid_period else "Invalid"))
+
+        # Raw ECG
+        ax1.plot(np.arange(len(self.raw_data))/self.ecg_object.sample_rate, self.raw_data,
+                 color='red', label="Raw")
+        ax1.set_ylabel("Voltage")
+        ax1.set_xlim(-.5, self.epoch_len * 1.25)
+        ax1.legend()
+
+        # Filtered ECG
+        ax2.plot(np.arange(len(self.filt_data))/self.ecg_object.sample_rate, self.filt_data,
+                 color='blue', label="Filtered")
+        ax2.set_ylabel("Voltage")
+        ax2.legend()
+
+        # Wavelet ECG
+        ax3.plot(np.arange(len(self.wavelet)) / self.ecg_object.sample_rate, self.wavelet,
+                 color='green', label="Wavelet")
+        ax3.set_ylabel("Voltage")
+        ax3.legend()
+
+        # Wavelet squared + filtered
+        ax4.plot(np.arange(len(self.filt_squared))/self.ecg_object.sample_rate, self.filt_squared,
+                 color='dodgerblue', label="Squared")
+        ax4.plot([np.arange(len(self.filt_squared))[i]/self.ecg_object.sample_rate for i in self.r_peaks],
+                 [self.filt_squared[i] for i in self.r_peaks], linestyle="", marker="x", color='black')
+        ax4.fill_between(x=[0, self.median_rr / 2 / self.ecg_object.sample_rate],
+                         y1=min(self.filt_squared), y2=max(self.filt_squared), color='grey', alpha=.5)
+        ax4.fill_between(x=[self.epoch_len - self.median_rr / 2 / self.ecg_object.sample_rate, self.epoch_len],
+                         y1=min(self.filt_squared), y2=max(self.filt_squared), color='grey', alpha=.5,
+                         label="Ignored zone")
+        ax4.set_ylabel("Voltage")
+        ax4.set_xlabel("Time (s)")
+        ax4.legend()
+
 
 # --------------------------------------------------------------------------------------------------------------------
 # ------------------------------------------------------- Running Code -----------------------------------------------
@@ -679,15 +724,19 @@ ecg = ECG(filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3028_01_BF
           start_offset=0, end_offset=0, epoch_len=15, load_accel=False,
           filter_data=False, low_f=1, high_f=30, f_type="bandpass")
 
-"""Additional stuff. Highlight + right-click + "execute selection in python console" to run.
-
 # If you want to re-filter the data without re-loading everything
-ecg.filtered = Filtering.filter_signal(data=ecg.raw, low_f=1, high_f=20, 
+ecg.filtered = Filtering.filter_signal(data=ecg.raw, low_f=1, high_f=20,
                                        filter_order=3, filter_type="bandpass", sample_f=ecg.sample_rate)
 
-# Plots section of raw, wavelet-transformed, and QRS template data. Specify data index with "input_index" argument.
+"""Additional stuff. Highlight + right-click + "execute selection in python console" to run.
+
+# Plots section of data and its stages of processing. Specify data index with "input_index" argument.
 # Plots random segment if "input_index=None". Plot title states whether valid or invalid signal.
-ecg.plot_qc_segment(input_index=None)
+ecg.plot_qc_segment(input_index=None, template_data='filtered', plot_steps=True, plot_template=False)
+
+# Plots section of raw and wavelet data with the 'average' QRS template.
+# Plots random segment if "input_index=None". Plot title states whether valid or invalid signal.
+ecg.plot_qc_segment(input_index=None, template_data='filtered', plot_steps=False, plot_template=True)
 
 # Plots histogram of epoched HR distribution (5bpm bin width). Marks average HR. 
 ecg.plot_histogram()
@@ -696,4 +745,5 @@ ecg.plot_histogram()
 ecg.plot_all_data(downsample_ratio=1)
 
 # Viewing filtered data with quality check output
+ecg.plot_validity(downsample_ratio=3)
 """
