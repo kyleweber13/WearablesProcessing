@@ -432,6 +432,9 @@ class Subject:
                 if not missing_value:
                     print("-No demographics data are missing.")
 
+        if "BMI" not in self.demographics.keys():
+            self.demographics["BMI"] = 1
+
     def crop_files(self):
         """Method that checks timestamps from all EDF files and determines how many data points to crop off start/end
            of files so all device data starts and stops at the same time.
@@ -599,7 +602,17 @@ class Subject:
         # Determines length of longest device data
         max_list = []
 
-        for obj in [self.wrist.epoch.timestamps, self.ankle.epoch.timestamps, self.ecg.epoch_timestamps]:
+        check_list = []
+
+        if self.wrist is not None:
+            check_list.append(self.wrist.epoch.timestamps)
+        if self.ankle is not None:
+            check_list.append(self.ankle.epoch.timestamps)
+        if self.ecg is not None:
+            check_list.append(self.ecg.epoch_timestamps)
+
+        # for obj in [self.wrist.epoch.timestamps, self.ankle.epoch.timestamps, self.ecg.epoch_timestamps]:
+        for obj in check_list:
             try:
                 max_list.append(len(obj))
             except (TypeError, AttributeError):
