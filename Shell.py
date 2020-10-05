@@ -18,8 +18,8 @@ warnings.filterwarnings("ignore")
 x = Subject(
     # What data to load in
     subject_id=3028,
-    load_ecg=True, load_ankle=True, load_wrist=True,
-    load_raw_ecg=True, load_bittium_accel=False, load_raw_ankle=True, load_raw_wrist=True,
+    load_ecg=True, load_ankle=False, load_wrist=False,
+    load_raw_ecg=True, load_bittium_accel=False, load_raw_ankle=False, load_raw_wrist=False,
     from_processed=False,
 
     crop_file_start=True,  # leave as True unless devices start at wildly different times
@@ -35,15 +35,15 @@ x = Subject(
     # raw_edf_folder="/Users/kyleweber/Desktop/Data/STEPS/",
     raw_edf_folder="/Users/kyleweber/Desktop/Data/OND07/EDF/",
 
-    treadmill_log_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/Treadmill_Log.csv",
+    # treadmill_log_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/Treadmill_Log.csv",
 
     # demographics_file="/Users/kyleweber/Desktop/Data/STEPS/Demographics_Data.csv",
-    demographics_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/Demographics_Data.csv",
+    # demographics_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/Demographics_Data.csv",
 
     # sleeplog_file="/Users/kyleweber/Desktop/Data/STEPS/Sleep_log_data.csv",
-    sleeplog_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/SleepLogs_All.csv",
+    # sleeplog_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/SleepLogs_All.csv",
 
-    nonwear_log_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/NonwearLog.xlsx",
+    # nonwear_log_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/NonwearLog.xlsx",
 
     # Where to write data
     # output_dir="/Users/kyleweber/Desktop/Data/STEPS/",
@@ -72,8 +72,8 @@ x.epoch_df = x.create_epoch_df()
 x.epoch_df.to_excel("{}/EpochDF_{}.xlsx".format(x.output_dir, x.subject_id))
 
 # Data that describes ECG validity in the context of movement
-x.ecg_contingency_table = x.create_ecg_contingency_table(data_type="counts", bin_size=100)
-x.ecg_contingency_table.to_excel("{}/{}_ECG_Validity_Table.xlsx".format(x.output_dir, x.subject_id))
+# x.ecg_contingency_table = x.create_ecg_contingency_table(data_type="counts", bin_size=100)
+# x.ecg_contingency_table.to_excel("{}/{}_ECG_Validity_Table.xlsx".format(x.output_dir, x.subject_id))
 
 # TODO
 # Fix zero divison error in validity_df creation
