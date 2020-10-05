@@ -596,20 +596,31 @@ class Subject:
 
         print("\nCreating dataframe of all epoched data...")
 
+        # Determines length of longest device data
+        max_list = []
+
+        for obj in [self.wrist.epoch.timestamps, self.ankle.epoch.timestamps, self.ecg.epoch_timestamps]:
+            try:
+                max_list.append(len(obj))
+            except (TypeError, AttributeError):
+                pass
+
+        max_len = max(max_list)
+
         # Default lists of None
-        timestamps = [None for i in range(self.data_len)]
-        wrist_svm = [None for i in range(self.data_len)]
-        wrist_intensity_cat = [None for i in range(self.data_len)]
-        ankle_svm = [None for i in range(self.data_len)]
-        ankle_intensity_cat = [None for i in range(self.data_len)]
-        ankle_pred_mets = [None for i in range(self.data_len)]
-        ankle_pred_speed = [None for i in range(self.data_len)]
-        epoch_hr = [None for i in range(self.data_len)]
-        hrr = [None for i in range(self.data_len)]
-        hr_intensity = [None for i in range(self.data_len)]
-        ecg_validity = [None for i in range(self.data_len)]
-        sleep_status = [None for i in range(self.data_len)]
-        nonwear_status = [None for i in range(self.data_len)]
+        timestamps = [None for i in range(max_len)]
+        wrist_svm = [None for i in range(max_len)]
+        wrist_intensity_cat = [None for i in range(max_len)]
+        ankle_svm = [None for i in range(max_len)]
+        ankle_intensity_cat = [None for i in range(max_len)]
+        ankle_pred_mets = [None for i in range(max_len)]
+        ankle_pred_speed = [None for i in range(max_len)]
+        epoch_hr = [None for i in range(max_len)]
+        hrr = [None for i in range(max_len)]
+        hr_intensity = [None for i in range(max_len)]
+        ecg_validity = [None for i in range(max_len)]
+        sleep_status = [None for i in range(max_len)]
+        nonwear_status = [None for i in range(max_len)]
 
         if not self.load_ankle and self.load_wrist:
             timestamps = self.wrist.epoch.timestamps
@@ -650,7 +661,7 @@ class Subject:
             epoch_hr = self.ecg.valid_hr
             # hrr = self.ecg.perc_hrr
             # hr_intensity = self.ecg.epoch_intensity
-            ecg_validity = self.ecg.epoch_validity
+            ecg_validity = ["Valid" if i == 0 else "Invalid" for i in self.ecg.epoch_validity]
             hr_intensity = [None for i in range(self.data_len)]
 
         if self.sleep.status is not None:
@@ -659,12 +670,15 @@ class Subject:
         if self.nonwear.status is not None:
             nonwear_status = ["Wear" if i == 0 else "Nonwear" for i in self.nonwear.status]
 
-        df = pd.DataFrame(list(zip(timestamps, wrist_svm, wrist_intensity_cat,
-                                   ankle_svm, ankle_intensity_cat, ankle_pred_speed, ankle_pred_mets,
-                                   epoch_hr, hrr, hr_intensity, ecg_validity, sleep_status, nonwear_status)),
-                          columns=["Timestamps", "Wrist_SVM", "Wrist_Intensity", "Ankle_SVM", "Ankle_Intensity",
-                                   "Ankle_Speed", "Ankle_METs", "HR", "%HRR", "HR_Intensity",
-                                   "ECG_Validity", "Sleep_Status", "Nonwear_Status"])
+        # Doesn't lose data due to zip shortest list
+        df = pd.DataFrame({"Timestamps": pd.Series(timestamps), "Wrist_SVM": pd.Series(wrist_svm),
+                          "Wrist_Intensity": pd.Series(wrist_intensity_cat), "Ankle_SVM": pd.Series(ankle_svm),
+                           "Ankle_Intensity": pd.Series(ankle_intensity_cat),
+                           "Ankle_Speed": pd.Series(ankle_pred_speed), "Ankle_METs": pd.Series(ankle_pred_mets),
+                           "HR": pd.Series(epoch_hr), "%HRR": pd.Series(hrr),
+                           "HR_Intensity": pd.Series(hr_intensity),
+                           "ECG_Validity": pd.Series(ecg_validity), "Sleep_Status": pd.Series(sleep_status),
+                           "Nonwear_Status": pd.Series(nonwear_status)})
 
         print("Complete.")
 
