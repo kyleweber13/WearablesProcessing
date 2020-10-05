@@ -729,11 +729,11 @@ class Subject:
 
                 for intensity_cat in range(4):
                     wrist_invalid.append(self.epoch_df.loc[(self.epoch_df["Wrist_Intensity"] == intensity_cat) &
-                                                           (self.epoch_df["ECG_Validity"] == 1)].shape[0] /
+                                                           (self.epoch_df["ECG_Validity"] == "Invalid")].shape[0] /
                                          self.epoch_df.loc[self.epoch_df["Wrist_Intensity"] == intensity_cat].shape[0]
                                          * 100)
                     wrist_valid.append(self.epoch_df.loc[(self.epoch_df["Wrist_Intensity"] == intensity_cat) &
-                                                         (self.epoch_df["ECG_Validity"] == 0)].shape[0] /
+                                                         (self.epoch_df["ECG_Validity"] == "Valid")].shape[0] /
                                        self.epoch_df.loc[self.epoch_df["Wrist_Intensity"] == intensity_cat].shape[0]
                                        * 100)
 
@@ -743,11 +743,11 @@ class Subject:
                 n_wrist_epochs.append(self.epoch_df.loc[self.epoch_df["Wrist_Intensity"] >= 2].shape[0])
 
                 wrist_invalid.append(self.epoch_df.loc[(self.epoch_df["Wrist_Intensity"] >= 2) &
-                                                       (self.epoch_df["ECG_Validity"] == 1)].shape[0] /
+                                                       (self.epoch_df["ECG_Validity"] == "Invalid")].shape[0] /
                                      self.epoch_df.loc[self.epoch_df["Wrist_Intensity"] >= 2].shape[0]
                                      * 100)
                 wrist_valid.append(self.epoch_df.loc[(self.epoch_df["Wrist_Intensity"] >= 2) &
-                                                     (self.epoch_df["ECG_Validity"] == 0)].shape[0] /
+                                                     (self.epoch_df["ECG_Validity"] == "Valid")].shape[0] /
                                    self.epoch_df.loc[self.epoch_df["Wrist_Intensity"] >= 2].shape[0]
                                    * 100)
 
@@ -755,11 +755,11 @@ class Subject:
                 n_wrist_epochs.append(self.epoch_df.loc[self.epoch_df["Wrist_Intensity"] >= 1].shape[0])
 
                 wrist_invalid.append(self.epoch_df.loc[(self.epoch_df["Wrist_Intensity"] >= 1) &
-                                                       (self.epoch_df["ECG_Validity"] == 1)].shape[0] /
+                                                       (self.epoch_df["ECG_Validity"] == "Invalid")].shape[0] /
                                      self.epoch_df.loc[self.epoch_df["Wrist_Intensity"] >= 1].shape[0]
                                      * 100)
                 wrist_valid.append(self.epoch_df.loc[(self.epoch_df["Wrist_Intensity"] >= 1) &
-                                                     (self.epoch_df["ECG_Validity"] == 0)].shape[0] /
+                                                     (self.epoch_df["ECG_Validity"] == "Valid")].shape[0] /
                                    self.epoch_df.loc[self.epoch_df["Wrist_Intensity"] >= 1].shape[0]
                                    * 100)
 
@@ -783,11 +783,11 @@ class Subject:
 
                 for intensity_cat in range(4):
                     ankle_invalid.append(self.epoch_df.loc[(self.epoch_df["Ankle_Intensity"] == intensity_cat) &
-                                                           (self.epoch_df["ECG_Validity"] == 1)].shape[0] /
+                                                           (self.epoch_df["ECG_Validity"] == "Invalid")].shape[0] /
                                          self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] == intensity_cat].shape[0]
                                          * 100)
                     ankle_valid.append(self.epoch_df.loc[(self.epoch_df["Ankle_Intensity"] == intensity_cat) &
-                                                         (self.epoch_df["ECG_Validity"] == 0)].shape[0] /
+                                                         (self.epoch_df["ECG_Validity"] == "Valid")].shape[0] /
                                        self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] == intensity_cat].shape[0]
                                        * 100)
                     n_ankle_epochs.append(self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] == intensity_cat].shape[0])
@@ -796,11 +796,11 @@ class Subject:
                 n_ankle_epochs.append(self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] >= 2].shape[0])
 
                 ankle_invalid.append(self.epoch_df.loc[(self.epoch_df["Ankle_Intensity"] >= 2) &
-                                                       (self.epoch_df["ECG_Validity"] == 1)].shape[0] /
+                                                       (self.epoch_df["ECG_Validity"] == "Invalid")].shape[0] /
                                      self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] >= 2].shape[0]
                                      * 100)
                 ankle_valid.append(self.epoch_df.loc[(self.epoch_df["Ankle_Intensity"] >= 2) &
-                                                     (self.epoch_df["ECG_Validity"] == 0)].shape[0] /
+                                                     (self.epoch_df["ECG_Validity"] == "Valid")].shape[0] /
                                    self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] >= 2].shape[0]
                                    * 100)
 
@@ -808,21 +808,21 @@ class Subject:
                 n_ankle_epochs.append(self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] >= 1].shape[0])
 
                 ankle_invalid.append(self.epoch_df.loc[(self.epoch_df["Ankle_Intensity"] >= 1) &
-                                                       (self.epoch_df["ECG_Validity"] == 1)].shape[0] /
+                                                       (self.epoch_df["ECG_Validity"] == "Invalid")].shape[0] /
                                      self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] >= 1].shape[0]
                                      * 100)
                 ankle_valid.append(self.epoch_df.loc[(self.epoch_df["Ankle_Intensity"] >= 1) &
-                                                     (self.epoch_df["ECG_Validity"] == 0)].shape[0] /
+                                                     (self.epoch_df["ECG_Validity"] == "Valid")].shape[0] /
                                    self.epoch_df.loc[self.epoch_df["Ankle_Intensity"] >= 1].shape[0]
                                    * 100)
 
-                ankle_perc_epochs = [self.ankle.model.intensity_totals["Sedentary%"]*100,
-                                     self.ankle.model.intensity_totals["Light%"]*100,
-                                     self.ankle.model.intensity_totals["Moderate%"]*100,
-                                     self.ankle.model.intensity_totals["Vigorous%"]*100,
+                ankle_perc_epochs = [self.ankle.model.intensity_totals["Sedentary%"] * 100,
+                                     self.ankle.model.intensity_totals["Light%"] * 100,
+                                     self.ankle.model.intensity_totals["Moderate%"] * 100,
+                                     self.ankle.model.intensity_totals["Vigorous%"] * 100,
                                      (self.ankle.model.intensity_totals["Moderate%"] +
                                      self.ankle.model.intensity_totals["Vigorous%"]) * 100,
-                                     (1-self.ankle.model.intensity_totals["Sedentary%"])*100]
+                                     (1-self.ankle.model.intensity_totals["Sedentary%"]) * 100]
 
             if not self.load_ankle or not self.load_ecg:
                 ankle_invalid = [None, None, None, None, None, None]
