@@ -34,7 +34,7 @@ except KeyError:
 
 class Subject:
 
-    def __init__(self, from_processed=True, raw_edf_folder=None, subject_id=None,
+    def __init__(self, study_code=None, session_num="01", from_processed=True, raw_edf_folder=None, subject_id=None,
                  load_wrist=False, load_ankle=False, load_ecg=False,
                  load_raw_ecg=False, load_bittium_accel=False, load_raw_ankle=False, load_raw_wrist=False,
                  epoch_len=15, remove_epoch_baseline=False, crop_file_start=True, crop_file_end=False,
@@ -57,6 +57,9 @@ class Subject:
         self.subject_id = subject_id  # 4-digit ID code
         self.raw_edf_folder = raw_edf_folder  # Folder where raw EDF files are stored
 
+        self.study_code = study_code
+        self.session_num = str(session_num)
+
         # Processing variables
         self.epoch_len = epoch_len  # Epoch length; seconds
         self.remove_epoch_baseline = remove_epoch_baseline  # Removes lowest value from epoched data to remove bias
@@ -68,6 +71,8 @@ class Subject:
 
         self.from_processed = from_processed  # Whether to import already-processed data
         self.write_results = write_results  # Whether to write results to CSV
+
+        self.epoch_df = None
 
         if self.from_processed:  # overrides write_results if reading from processed
             self.write_results = False
@@ -99,7 +104,7 @@ class Subject:
         self.wrist_filename = None  # file name, no extension, EDF file
         self.wrist_proc_filepath = None  # pathway to processed wrist file (csv/xlsx)
         self.wrist_temp_proc_filepath = None  # pathway to processed wrist temperature file (csv/xlsx)
-        self.wrist_temp_filename = None  # file name, no extension, wrist temperature file
+        self.wrist_temperature_filename = None
 
         self.load_ankle = load_ankle
         self.load_raw_ankle = load_raw_ankle
@@ -113,6 +118,9 @@ class Subject:
         self.load_bittium_accel = load_bittium_accel
         self.ecg_proc_filepath = None
         self.ecg_filename = None
+
+        self.proc_filename = None
+        self.proc_filepath = None
 
         # Boolean of whether ECG is included or not
         # Used for output file naming; important for data cropping
@@ -136,6 +144,42 @@ class Subject:
         self.stats = None
         self.daily_summary = None
 
+    def create_filenames(self):
+
+        if self.demographics["Hand"] == "Right":
+            use_side = "L"
+        if self.demographics["Hand"] == "Left":
+            use_side = "R"
+
+        # OND07 filename structure -----------------------------------------------------------------------------------
+        if self.study_code == "OND07":
+
+            if self.load_wrist and self.load_raw_wrist:
+                self.wrist_filename = "OND07_WTL_{}_{}_GA_{}Wrist_Accelerometer.edf".format(self.subject_id,
+                                                                                            self.session_num,
+                                                                                            use_side)
+                self.wrist_filepath = self.raw_edf_folder + self.wrist_filename
+
+                self.wrist_temperature_filename = "OND07_WTL_{}_{}_GA_{}Wrist_Temperature.edf".format(self.subject_id,
+                                                                                                      self.session_num,
+                                                                                                      use_side)
+                self.wrist_temperature_filepath = self.raw_edf_folder + self.wrist_temp_filename
+
+            if self.load_ankle and self.load_raw_ankle:
+                self.ankle_filename = "OND07_WTL_{}_{}_GA_{}Ankle_Accelerometer.edf".format(self.subject_id,
+                                                                                            self.session_num,
+                                                                                            use_side)
+                self.ankle_filepath = self.raw_edf_folder + self.ankle_filename
+
+            if self.load_ecg and self.load_raw_ecg:
+                self.ecg_filename = "OND07_WTL_{}_{}_BF.edf".format(self.subject_id, self.session_num)
+                self.ecg_filepath = self.raw_edf_folder + self.ecg_filename
+
+            if self.from_processed:
+                self.proc_filename = "OND07_WTL_{}_{}_EpochData.csv".format(self.subject_id, self.session_num)
+                self.proc_filepath = self.processed_folder + self.proc_filename
+
+    # to cut
     def get_edf_filepaths(self):
         """Retrieves EDF filenames associated with current subject."""
 
@@ -236,9 +280,10 @@ class Subject:
         if self.ecg_filepath is not None:
             self.ecg_filename = self.ecg_filepath.split("/")[-1]
 
+    # to cut
     def get_processed_filepaths(self):
 
-        if not self.from_processed:
+        """if not self.from_processed:
             return None
 
         print("\nChecking {} for processed files...".format(self.processed_folder))
@@ -347,6 +392,7 @@ class Subject:
 
         if self.ecg_filepath is None and self.load_ecg and self.ecg_proc_filepath is not None:
             self.ecg_filename = self.ecg_proc_filepath.split("BF")[0].split("/")[-1] + "BF"
+        """
 
     def import_demographics(self):
         """Function that imports demographics data from spreadsheet for desired participants. Works with either
@@ -534,9 +580,11 @@ class Subject:
     def create_device_objects(self):
 
         # Reads in ECG data
-        if self.load_ecg and (self.ecg_filepath is not None or self.ecg_proc_filepath is not None):
-            self.ecg = ECG.ECG(filepath=self.ecg_filepath,
-                               filename=self.ecg_filename.split(".")[0],
+        # if self.load_ecg and (self.ecg_filepath is not None or self.ecg_proc_filepath is not None):
+        if self.load_ecg and (self.ecg_filepath is not None or self.proc_filepath is not None):
+            self.ecg = ECG.ECG(subject_id=self.subject_id,
+                               filepath=self.ecg_filepath,
+                               processed_file=self.proc_filepath,
                                load_raw=self.load_raw_ecg,
                                from_processed=self.from_processed,
                                processed_folder=self.processed_folder,
@@ -550,11 +598,11 @@ class Subject:
         # Objects from Accelerometer script ---------------------------------------------------------------------------
 
         # Wrist accelerometer
-        if self.load_wrist and (self.wrist_filepath is not None or self.wrist_proc_filepath is not None):
+        if self.load_wrist and (self.wrist_filepath is not None or self.proc_filepath is not None):
             self.wrist = Accelerometer.Wrist(subject_id=self.subject_id,
                                              raw_filepath=self.wrist_filepath,
                                              filename=self.wrist_filename,
-                                             proc_filepath=self.wrist_proc_filepath,
+                                             proc_filepath=self.proc_filepath,
                                              temperature_filepath=self.wrist_temperature_filepath,
                                              load_raw=self.load_raw_wrist,
                                              from_processed=self.from_processed,
@@ -564,14 +612,14 @@ class Subject:
                                              end_offset=self.offset_dict["WristEnd"],
                                              ecg_object=self.ecg,
                                              output_dir=self.output_dir,
-                                             processed_folder=self.processed_folder,
-                                             write_results=self.write_results)
+                                             processed_folder=self.processed_folder)
 
         # Ankle accelerometer
-        if self.load_ankle and (self.ankle_filepath is not None or self.ankle_proc_filepath is not None):
+        # if self.load_ankle and (self.ankle_filepath is not None or self.ankle_proc_filepath is not None):
+        if self.load_ankle and (self.ankle_filepath is not None or self.proc_filepath is not None):
             self.ankle = Accelerometer.Ankle(subject_id=self.subject_id,
                                              raw_filepath=self.ankle_filepath,
-                                             proc_filepath=self.ankle_proc_filepath,
+                                             proc_filepath=self.proc_filepath,
                                              filename=self.ankle_filename,
                                              load_raw=self.load_raw_ankle,
                                              from_processed=self.from_processed,
@@ -696,6 +744,15 @@ class Subject:
         print("Complete.")
 
         return df
+
+    def import_epoch_df(self):
+
+        if self.from_processed:
+            print("\nImporting epoched data...")
+            self.epoch_df = pd.read_csv(self.proc_filepath)
+            print("Done.")
+        if not self.from_processed:
+            return None
 
     def create_ecg_contingency_table(self, data_type="intensity", bin_size=100):
         """Creates dataframe which represents a contingency table for ECG signal validity by intensity category

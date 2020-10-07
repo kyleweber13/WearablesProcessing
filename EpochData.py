@@ -5,7 +5,7 @@ import pandas as pd
 
 class EpochAccel:
 
-    def __init__(self, raw_data=None, raw_filename=None, proc_filepath=None,
+    def __init__(self, raw_data=None, raw_filename=None, proc_filepath=None, accel_type=None,
                  remove_baseline=False, from_processed=True,
                  processed_folder=None, accel_only=False, epoch_len=15):
 
@@ -16,7 +16,11 @@ class EpochAccel:
         self.processed_folder = processed_folder
         self.raw_filename = raw_filename
         self.proc_filepath = proc_filepath
-        self.proc_filename = proc_filepath.split("/")[-1]
+
+        if self.proc_filepath is not None:
+            self.proc_filename = proc_filepath.split("/")[-1]
+        if self.proc_filepath is None:
+            self.proc_filename = self.raw_filename + "_IntensityData.csv"
 
         self.svm = []
         self.timestamps = None
@@ -31,8 +35,10 @@ class EpochAccel:
             self.epoch_from_raw(raw_data=raw_data)
 
         # Loads epoched data from existing file
-        if self.from_processed:
-            self.epoch_from_processed()
+        if self.from_processed and accel_type == "wrist":
+            self.epoch_from_processed_wrist()
+        if self.from_processed and accel_type == "ankle":
+            self.epoch_from_processed_ankle()
 
         # Removes bias from SVM by subtracting minimum value
         if self.remove_baseline and min(self.svm) != 0.0:
@@ -128,3 +134,20 @@ class EpochAccel:
             self.intensity_cat = [int(i) for i in df_ankle["IntensityCategory"]]
 
         print("Complete.")
+
+    def epoch_from_processed_wrist(self):
+
+        df = pd.read_csv(self.proc_filepath, usecols=["Timestamps", "Wrist_SVM"])
+        self.timestamps = [i for i in pd.to_datetime(df["Timestamps"])]
+        self.svm = [i for i in df["Wrist_SVM"]]
+
+    def epoch_from_processed_ankle(self):
+
+        df = pd.read_csv(self.proc_filepath, usecols=["Timestamps", "Ankle_SVM", "Ankle_Intensity",
+                                                      "Ankle_Speed", "Ankle_METs"])
+        # self.epoch_len = int((self.timestamps.iloc[1] - self.timestamps.iloc[0]).seconds())
+        self.timestamps = [i for i in pd.to_datetime(df["Timestamps"])]
+        self.svm = [i for i in df["Ankle_SVM"]]
+        self.pred_mets = [i for i in df["Ankle_METs"]]
+        self.pred_speed = [i for i in df["Ankle_Speed"]]
+        self.intensity_cat = [i for i in df["Ankle_Intensity"]]

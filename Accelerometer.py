@@ -22,7 +22,7 @@ class Wrist:
                  temperature_filepath=None,
                  output_dir=None, load_raw=False, accel_only=False,
                  epoch_len=15, start_offset=0, end_offset=0, ecg_object=None,
-                 from_processed=True, processed_folder=None, write_results=False):
+                 from_processed=True, processed_folder=None):
 
         print()
         print("======================================== WRIST ACCELEROMETER ========================================")
@@ -45,14 +45,16 @@ class Wrist:
 
         self.from_processed = from_processed
         self.processed_folder = processed_folder
-        self.write_results = write_results
 
         # Loads raw accelerometer data and generates timestamps
         self.raw = ImportEDF.GENEActiv(filepath=self.filepath,
                                        start_offset=self.start_offset, end_offset=self.end_offset,
                                        load_raw=self.load_raw)
 
-        self.epoch = EpochData.EpochAccel(raw_data=self.raw, proc_filepath=self.proc_filepath,
+        self.epoch = EpochData.EpochAccel(raw_data=self.raw,
+                                          accel_type="wrist",
+                                          raw_filename=self.filename,
+                                          proc_filepath=self.proc_filepath,
                                           accel_only=self.accel_only, epoch_len=self.epoch_len,
                                           from_processed=self.from_processed, processed_folder=self.processed_folder)
 
@@ -66,26 +68,6 @@ class Wrist:
             self.temperature.sample_rate = 1 / (300 / self.raw.sample_rate)
         if not self.load_raw:
             self.temperature.sample_rate = 0.25
-
-        # Write results
-        if self.write_results:
-            self.write_model()
-
-    def write_model(self):
-        """Writes csv of epoched timestamps, counts, and intensity categorization to working directory."""
-
-        if not self.accel_only:
-            out_filename = self.output_dir + self.filename + "_IntensityData.csv"
-        if self.accel_only:
-            out_filename = self.output_dir + self.filename + "_IntensityData_AccelOnly.csv"
-
-        with open(out_filename, "w") as outfile:
-            writer = csv.writer(outfile, delimiter=',', lineterminator="\n")
-
-            writer.writerow(["Timestamp", "ActivityCount", "IntensityCategory"])
-            writer.writerows(zip(self.epoch.timestamps, self.epoch.svm, self.model.epoch_intensity))
-
-        print("\n" + "Complete. File {} saved.".format(out_filename))
 
 
 class WristModel:
@@ -252,6 +234,8 @@ class Ankle:
                                        load_raw=self.load_raw)
 
         self.epoch = EpochData.EpochAccel(raw_data=self.raw,
+                                          accel_type="ankle",
+                                          raw_filename=self.filename,
                                           proc_filepath=self.proc_filepath,
                                           epoch_len=self.epoch_len,
                                           remove_baseline=self.remove_baseline, accel_only=self.accel_only,
@@ -263,9 +247,6 @@ class Ankle:
         # Create AnkleModel object
         self.model = AnkleModel(ankle_object=self, bmi=self.bmi, write_results=self.write_results,
                                 ecg_object=self.ecg_object)
-
-        if self.write_results:
-            self.write_model()
 
     def write_model(self):
 
@@ -337,7 +318,8 @@ class Treadmill:
                                                             'Walk1Counts', 'Walk2Counts', 'Walk3Counts',
                                                             'Walk4Counts', 'Walk5Counts', 'Slope', 'Y_int', 'r2'])
 
-            df = log.loc[log["SUBJECT"] == self.filename.split("_0")[0]]
+            # df = log.loc[log["SUBJECT"] == self.ankle_object.subject_id]
+            df = log.loc[log["SUBJECT"].str.contains(str(self.subject_id))]
 
             if df.shape[0] == 1:
                 self.valid_data = True

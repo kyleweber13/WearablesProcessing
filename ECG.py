@@ -5,6 +5,7 @@ from ecgdetectors import Detectors
 
 from matplotlib import pyplot as plt
 import numpy as np
+import pandas as pd
 import statistics
 import scipy.stats as stats
 from datetime import datetime
@@ -21,11 +22,13 @@ from random import randint
 
 class ECG:
 
-    def __init__(self, filepath=None, output_dir=None, age=0, start_offset=0, end_offset=0,
+    def __init__(self, subject_id=None, filepath=None, output_dir=None, processed_folder=None,
+                 processed_file=None,
+                 age=0, start_offset=0, end_offset=0,
                  rest_hr_window=60, n_epochs_rest=10,
                  epoch_len=15, load_accel=False,
                  filter_data=False, low_f=1, high_f=30, f_type="bandpass",
-                 load_raw=False, from_processed=True, write_results=True):
+                 load_raw=False, from_processed=True):
         """Class that contains raw and processed ECG data.
 
         :argument
@@ -50,7 +53,6 @@ class ECG:
         -f_type: type of filter; "lowpass", "highpass", "bandpass"
 
         OTHER
-        -write_results: boolean of whether to write output file
         -age: participant age in years. Needed for HRmax calculation.
         """
 
@@ -58,9 +60,10 @@ class ECG:
         print("============================================= ECG DATA ==============================================")
 
         self.filepath = filepath
-        self.filename = self.filepath.split("/")[-1].split(".")[0]
-        self.subjectID = self.filename.split("_")[2]
+        self.processed_file = processed_file
+        self.subject_id = subject_id
         self.output_dir = output_dir
+        self.processed_folder = processed_folder
         self.age = age
         self.epoch_len = epoch_len
         self.rest_hr_window = rest_hr_window
@@ -109,14 +112,15 @@ class ECG:
         if self.from_processed:
             self.epoch_validity, self.epoch_hr = None, None
         if not self.from_processed:
-            self.epoch_validity, self.epoch_hr, self.avg_voltage, self.rr_sd = self.check_quality()
+            self.epoch_validity, self.epoch_hr, self.avg_voltage, self.rr_sd, self.r_peaks = self.check_quality()
 
         # Loads epoched data from existing file
         if self.from_processed:
-            self.epoch_timestamps, self.epoch_validity, self.epoch_hr = self.load_processed()
+            self.load_processed()
 
         # List of epoched heart rates but any invalid epoch is marked as None instead of 0 (as is self.epoch_hr)
-        self.valid_hr = [self.epoch_hr[i] if self.epoch_validity[i] == 0 else None for i in range(len(self.epoch_hr))]
+        self.valid_hr = [self.epoch_hr[i] if self.epoch_validity[i] == "Valid"
+                         else None for i in range(len(self.epoch_hr))]
 
         self.quality_report = self.generate_quality_report()
 
@@ -125,9 +129,6 @@ class ECG:
         self.perc_hrr = None
         self.epoch_intensity = None
         self.epoch_intensity_totals = None
-
-        if self.write_results:
-            self.write_model()
 
     def epoch_accel(self):
 
@@ -151,17 +152,18 @@ class ECG:
 
         t0 = datetime.now()
 
-        validity_list = []
-        epoch_hr = []
-        avg_voltage = []
-        rr_sd = []
+        validity_list = []  # window's validity (binary; 1 = invalid)
+        epoch_hr = []  # window's HRs
+        avg_voltage = []  # window's voltage range
+        rr_sd = []  # window's RR SD
+        r_peaks = []  # all R peak indexes
 
         bar = progressbar.ProgressBar(maxval=len(self.raw),
                                       widgets=[progressbar.Bar('>', '', '|'), ' ',
                                                progressbar.Percentage()])
         bar.start()
 
-        for start_index in range(0, int(len(self.raw)), self.epoch_len*self.sample_rate):
+        for start_index in range(0, int(len(self.raw)), self.epoch_len * self.sample_rate):
             bar.update(start_index + 1)
 
             qc = CheckQuality(ecg_object=self, start_index=start_index, epoch_len=self.epoch_len)
@@ -172,6 +174,14 @@ class ECG:
                 validity_list.append(0)
                 epoch_hr.append(round(qc.hr, 2))
                 rr_sd.append(qc.rr_sd)
+
+                for peak in qc.r_peaks_index_all:
+                    r_peaks.append(peak)
+                for peak in qc.removed_peak:
+                    r_peaks.append(peak + start_index)
+
+                r_peaks = sorted(r_peaks)
+
             if not qc.valid_period:
                 validity_list.append(1)
                 epoch_hr.append(0)
@@ -182,15 +192,15 @@ class ECG:
         t1 = datetime.now()
         proc_time = (t1 - t0).seconds
         print("\n" + "Quality check complete ({} seconds).".format(round(proc_time, 2)))
-        print("-{} seconds per hour of data.".format(round(proc_time /
-                                                           (len(self.raw)/self.sample_rate/3600)), 2))
+        print("-Processing time of {} seconds per "
+              "hour of data.".format(round(proc_time / (len(self.raw)/self.sample_rate/3600)), 2))
 
-        return validity_list, epoch_hr, avg_voltage, rr_sd
+        return validity_list, epoch_hr, avg_voltage, rr_sd, r_peaks
 
     def generate_quality_report(self):
         """Calculates how much of the data was usable. Returns values in dictionary."""
 
-        invalid_epochs = self.epoch_validity.count(1)  # number of invalid epochs
+        invalid_epochs = self.epoch_validity.count("Invalid")  # number of invalid epochs
         hours_lost = round(invalid_epochs / (60 / self.epoch_len) / 60, 2)  # hours of invalid data
         perc_invalid = round(invalid_epochs / len(self.epoch_validity) * 100, 1)  # percent of invalid data
 
@@ -226,34 +236,12 @@ class ECG:
         return quality_report
 
     def load_processed(self):
-        """Method to load previously-processed epoched timestamp, HR and validity data.
 
-        :returns
-        -epoch_timestamps: timestamp for start of each epoch
-        -epoch_validity: binary list (0=valid; 1=invalid) of whether data is usable
-        -epoch_hr: average HR in epoch
-        """
+        df = pd.read_csv(self.processed_file)
 
-        print("\n" + "Loading existing data for {}...".format(self.filepath))
-
-        epoch_timestamps, epoch_validity, epoch_hr = np.loadtxt(fname=self.output_dir + "Model Output/" +
-                                                                      self.filename + "_IntensityData.csv",
-                                                                delimiter=",", skiprows=1, usecols=(0, 1, 2),
-                                                                unpack=True, dtype="str")
-
-        epoch_timestamps_formatted = []
-        for epoch in epoch_timestamps:
-            try:
-                epoch_timestamps_formatted.append(datetime.strptime(epoch[:-3], "%Y-%m-%dT%H:%M:%S.%f"))
-            except ValueError:
-                epoch_timestamps_formatted.append(datetime.strptime(epoch.split(".")[0], "%Y-%m-%d %H:%M:%S"))
-
-        epoch_validity = [int(i) for i in epoch_validity]
-        epoch_hr = [round(float(i), 2) for i in epoch_hr]
-
-        print("Complete.")
-
-        return epoch_timestamps_formatted, epoch_validity, epoch_hr
+        self.epoch_timestamps = [i for i in pd.to_datetime(df["Timestamps"])]
+        self.epoch_validity = [i for i in df["ECG_Validity"]]
+        self.epoch_hr = [i for i in df["HR"]]
 
     def find_resting_hr(self, window_size, n_windows, sleep_status=None, start_index=None, end_index=None):
         """Function that calculates resting HR based on inputs.
@@ -445,7 +433,7 @@ class ECG:
         plt.legend(loc='upper left')
         plt.show()
 
-    def plot_random_qc(self, input_index=None):
+    def plot_qc_segment(self, input_index=None, template_data='filtered', plot_steps=True, plot_template=False):
         """Method that generates a random 10-minute sample of data. Overlays filtered data with quality check output.
 
         :argument
@@ -470,7 +458,8 @@ class ECG:
         seconds_seq_raw = np.arange(0, self.epoch_len * self.sample_rate) / self.sample_rate
 
         # Epoch's quality check
-        validity_data = CheckQuality(ecg_object=self, start_index=start_index, epoch_len=self.epoch_len)
+        validity_data = CheckQuality(ecg_object=self, start_index=start_index,
+                                     epoch_len=self.epoch_len, template_data=template_data)
 
         print()
         print("Valid HR: {} (passed {}/5 conditions)".format(validity_data.rule_check_dict["Valid Period"],
@@ -492,81 +481,87 @@ class ECG:
                                                validity_data.rule_check_dict["Correlation Valid"]))
 
         # Plot
-        plt.close("all")
 
-        if not self.load_accel:
-            fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(10, 7))
+        if plot_template:
+            plt.close("all")
+
+            fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(10, 7))
 
             valid_period = "Valid" if validity_data.rule_check_dict["Valid Period"] else "Invalid"
 
-            ax1.set_title("Participant {}: {} (index = {})".format(self.subjectID, valid_period, start_index))
+            ax1.set_title("Participant {}: {} (index = {})".format(self.subject_id, valid_period, start_index))
 
             # Filtered ECG data
-            ax1.plot(seconds_seq_raw, self.filtered[start_index:end_index], color='black', label="Filtered ECG")
-            ax1.plot(validity_data.r_peaks/self.sample_rate,
-                     [self.filtered[start_index+peak] for peak in validity_data.r_peaks],
-                     linestyle="", marker="x", color='green')
+            ax1.plot(seconds_seq_raw, self.raw[start_index:end_index], color='black', label="Raw ECG")
             ax1.set_ylabel("Voltage")
             ax1.legend(loc='upper left')
 
-            # Filtered ECG data
-            ax2.plot(seconds_seq_raw, self.raw[start_index:end_index], color='red', label="Raw ECG")
-            ax2.plot(validity_data.r_peaks/self.sample_rate,
-                     [self.raw[start_index+peak] for peak in validity_data.r_peaks],
+            # Wavelet data
+            ax2.plot(np.arange(0, len(validity_data.wavelet)) / self.sample_rate, validity_data.wavelet,
+                     color='green', label="Wavelet")
+            ax2.plot(validity_data.r_peaks / self.sample_rate,
+                     [validity_data.wavelet[peak] for peak in validity_data.r_peaks],
                      linestyle="", marker="x", color='black')
             ax2.set_ylabel("Voltage")
-            ax2.legend(loc='upper left')
+            ax2.legend()
 
-            ax2.set_xlabel("Seconds")
+            for peak in validity_data.removed_peak:
+                ax2.plot(np.arange(0, len(validity_data.wavelet))[peak] / self.sample_rate,
+                         validity_data.wavelet[peak], marker="x", color='red')
 
-        if self.load_accel:
-            seconds_seq_accel = np.arange(0, self.epoch_len * self.accel_sample_rate) / self.accel_sample_rate
+            for i, window in enumerate(validity_data.ecg_windowed):
+                ax3.plot(np.arange(0, len(window))/self.sample_rate, window, color='black')
 
-            fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(10, 7))
+            ax3.plot(np.arange(0, len(validity_data.average_qrs))/self.sample_rate, validity_data.average_qrs,
+                     label="QRS template ({} data; r={})".format(template_data, validity_data.average_r),
+                     color='red', linestyle='dashed')
 
-            valid_period = "Valid" if validity_data.rule_check_dict["Valid Period"] else "Invalid"
+            ax3.legend()
+            ax3.set_ylabel("Voltage")
+            ax3.set_xlabel("Seconds")
 
-            ax1.set_title("Participant {}: {} (index = {})".format(self.subjectID, valid_period, start_index))
-
-            # Filtered ECG data
-            ax1.plot(seconds_seq_raw, self.filtered[start_index:end_index], color='black', label="Filtered ECG")
-            ax1.plot(validity_data.r_peaks / self.sample_rate,
-                     [self.filtered[start_index + peak] for peak in validity_data.r_peaks],
-                     linestyle="", marker="x", color='green')
-            ax1.set_ylabel("Voltage")
-
-            top, bottom = plt.ylim()
-
-            if top < 1:
-                plt.ylim(-0.1, 1)
-
-            ax1.legend(loc='upper left')
-
-            # Filtered ECG data
-            accel_start = int(start_index / (self.sample_rate / self.accel_sample_rate))
-            accel_end = int(start_index + self.accel_sample_rate * self.epoch_len)
-
-            ax2.plot(seconds_seq_accel, self.accel_vm[accel_start:accel_end], color='blue', label="Accel VM")
-            ax2.set_ylabel("G's")
-            ax2.legend(loc='upper left')
-
-            ax2.set_xlabel("Seconds")
+        if plot_steps:
+            validity_data.plot_steps()
 
         return validity_data
 
-    def write_model(self):
-        """Writes csv of epoched timestamps, validity category."""
 
-        with open(self.output_dir + self.filename + "_IntensityData.csv", "w") as outfile:
-            writer = csv.writer(outfile, delimiter=',', lineterminator="\n")
+class DetectAllPeaks:
 
-            writer.writerow(["Timestamp", "Validity(1=invalid)", "AverageHR", "%HRR", "IntensityCategory"])
-            writer.writerows(zip(self.epoch_timestamps, self.epoch_validity, self.epoch_hr,
-                                 self.perc_hrr, self.epoch_intensity))
+    def __init__(self, data=None, sample_rate=1, algorithm="wavelet"):
 
-        print("\n" + "Complete. File {} saved.".format(self.output_dir +
-                                                       self.filename + "_IntensityData.csv"))
+        self.r_peaks = None
+        self.filtered = None
+        self.filt_squared = None
+        self.algorithm = algorithm
 
+        self.sample_rate = sample_rate
+        self.data = data
+
+    def detect_peaks(self):
+        t0 = datetime.now()
+        print("\nRunning {} peak detection on entire dataset. Please wait a while...".format(self.algorithm))
+
+        detectors = Detectors(self.sample_rate)
+
+        if self.algorithm == "wavelet":
+            self.r_peaks, self.filtered, self.filt_squared = detectors.swt_detector(unfiltered_ecg=self.data)
+
+        if self.algorithm == "Hamilton":
+            self.r_peaks, self.filtered = detectors.hamilton_detector(unfiltered_ecg=self.data)
+
+        t1 = datetime.now()
+        proc_time = round((t1-t0).seconds, 1)
+
+        print("Complete. Took {} seconds.".format(proc_time))
+
+    def plot_all_peaks(self, downsample_ratio=3):
+
+        plt.plot(np.arange(len(self.data))[::downsample_ratio]/self.sample_rate/60,
+                 self.data[::downsample_ratio], color='black')
+
+        plt.plot([peak/self.sample_rate/60 for peak in self.r_peaks], [self.data[peak] for peak in self.r_peaks],
+                 marker="x", color='red', linestyle="")
 
 # --------------------------------------------------------------------------------------------------------------------
 # ------------------------------------------------------- Quality Check ----------------------------------------------
@@ -581,7 +576,7 @@ class CheckQuality:
        19(3). 832-838.
     """
 
-    def __init__(self, ecg_object, start_index, voltage_thresh=250, epoch_len=15):
+    def __init__(self, ecg_object, start_index, template_data='filtered', voltage_thresh=250, epoch_len=15):
         """Initialization method.
 
         :param
@@ -596,11 +591,15 @@ class CheckQuality:
         self.epoch_len = epoch_len
         self.fs = ecg_object.sample_rate
         self.start_index = start_index
+        self.template_data = template_data
 
         self.ecg_object = ecg_object
 
         self.raw_data = ecg_object.raw[self.start_index:self.start_index+self.epoch_len*self.fs]
         self.filt_data = ecg_object.filtered[self.start_index:self.start_index+self.epoch_len*self.fs]
+        self.wavelet = None
+        self.filt_squared = None
+
         self.index_list = np.arange(0, len(self.raw_data), self.epoch_len*self.fs)
 
         self.rule_check_dict = {"Valid Period": False,
@@ -613,6 +612,7 @@ class CheckQuality:
 
         # prep_data parameters
         self.r_peaks = None
+        self.r_peaks_index_all = None
         self.rr_sd = None
         self.removed_peak = []
         self.enough_beats = True
@@ -646,9 +646,12 @@ class CheckQuality:
 
         # Runs rules check if enough peaks found
         if self.enough_beats:
-            self.adaptive_filter()
+            self.adaptive_filter(template_data=self.template_data)
             self.calculate_correlation()
             self.apply_rules()
+
+        if self.valid_period:
+            self.r_peaks_index_all = [peak + start_index for peak in self.r_peaks]
 
     def prep_data(self):
         """Function that:
@@ -668,7 +671,7 @@ class CheckQuality:
 
         # Runs peak detection on raw data ----------------------------------------------------------------------------
         # Uses ecgdetectors package -> stationary wavelet transformation + Pan-Tompkins peak detection algorithm
-        self.r_peaks = detectors.swt_detector(unfiltered_ecg=self.filt_data)
+        self.r_peaks, self.wavelet, self.filt_squared = detectors.swt_detector(unfiltered_ecg=self.filt_data)
 
         # Checks to see if there are enough potential peaks to correspond to correct HR range ------------------------
         # Requires number of beats in window that corresponds to ~40 bpm to continue
@@ -697,7 +700,7 @@ class CheckQuality:
         # Calculates median RR-interval in seconds
         median_rr = np.median(self.delta_rr)
 
-        # SD of RR intervals
+        # SD of RR intervals in ms
         self.rr_sd = np.std(self.delta_rr) * 1000
 
         # Converts median_rr to samples
@@ -707,7 +710,8 @@ class CheckQuality:
         # Peak removed if within median_rr/2 samples of start of window
         # Peak removed if within median_rr/2 samples of end of window
         for i, peak in enumerate(self.r_peaks):
-            if peak < (self.median_rr/2 + 1) or (self.epoch_len*self.fs - peak) < (self.median_rr/2 + 1):
+            # if peak < (self.median_rr/2 + 1) or (self.epoch_len*self.fs - peak) < (self.median_rr/2 + 1):
+            if peak < (self.median_rr / 2 + 1) or (self.epoch_len * self.fs - peak) < (self.median_rr / 2 + 1):
                 self.removed_peak.append(self.r_peaks.pop(i))
                 self.removal_indexes.append(i)
 
@@ -718,7 +722,7 @@ class CheckQuality:
         # Calculates range of ECG voltage ----------------------------------------------------------------------------
         self.volt_range = max(self.raw_data) - min(self.raw_data)
 
-    def adaptive_filter(self):
+    def adaptive_filter(self, template_data="filtered"):
         """Method that runs an adaptive filter that generates the "average" QRS template for the window of data.
 
         - Calculates the median RR interval
@@ -732,7 +736,13 @@ class CheckQuality:
 
         # Approach 2: takes a window around each detected R-peak of width peak +/- median_rr/2 ------------------------
         for peak in self.r_peaks:
-            window = self.filt_data[peak - int(self.median_rr / 2):peak + int(self.median_rr / 2)]
+            if template_data == "raw":
+                window = self.raw_data[peak - int(self.median_rr / 2):peak + int(self.median_rr / 2)]
+            if template_data == "filtered":
+                window = self.filt_data[peak - int(self.median_rr / 2):peak + int(self.median_rr / 2)]
+            if template_data == "wavelet":
+                window = self.wavelet[peak - int(self.median_rr / 2):peak + int(self.median_rr / 2)]
+
             self.ecg_windowed.append(window)  # Adds window to list of windows
 
         # Approach 3: determine average QRS template ------------------------------------------------------------------
@@ -846,3 +856,48 @@ class CheckQuality:
             sd = np.std(self.ecg_object.accel_vm[accel_start:accel_end])
             self.rule_check_dict["Accel SD"] = sd
 
+    def plot_steps(self):
+
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, sharex="col", figsize=(10, 6))
+        plt.suptitle("ECG Quality Check Processing Steps "
+                     "({} period)".format("Valid" if self.valid_period else "Invalid"))
+
+        # Raw ECG
+        ax1.plot(np.arange(len(self.raw_data))/self.ecg_object.sample_rate, self.raw_data,
+                 color='red', label="Raw")
+        ax1.set_ylabel("Voltage")
+        ax1.set_xlim(-.5, self.epoch_len * 1.25)
+        ax1.legend()
+
+        # Filtered ECG
+        ax2.plot(np.arange(len(self.filt_data))/self.ecg_object.sample_rate, self.filt_data,
+                 color='blue', label="Filtered")
+        ax2.set_ylabel("Voltage")
+        ax2.legend()
+
+        # Wavelet ECG
+        ax3.plot(np.arange(len(self.wavelet)) / self.ecg_object.sample_rate, self.wavelet,
+                 color='green', label="Wavelet")
+        ax3.set_ylabel("Voltage")
+        ax3.legend()
+
+        # Wavelet squared + filtered
+        ax4.plot(np.arange(len(self.filt_squared))/self.ecg_object.sample_rate, self.filt_squared,
+                 color='dodgerblue', label="Squared")
+        ax4.plot([np.arange(len(self.filt_squared))[i]/self.ecg_object.sample_rate for i in self.r_peaks],
+                 [self.filt_squared[i] for i in self.r_peaks], linestyle="", marker="x", color='black')
+        ax4.fill_between(x=[0, self.median_rr / 2 / self.ecg_object.sample_rate],
+                         y1=min(self.filt_squared), y2=max(self.filt_squared), color='grey', alpha=.5)
+        ax4.fill_between(x=[self.epoch_len - self.median_rr / 2 / self.ecg_object.sample_rate, self.epoch_len],
+                         y1=min(self.filt_squared), y2=max(self.filt_squared), color='grey', alpha=.5,
+                         label="Peak removed")
+        ax4.set_ylabel("Voltage")
+        ax4.set_xlabel("Time (s)")
+        ax4.legend()
+
+# qc = CheckQuality(ecg_object=x.ecg, start_index=8887500, template_data="raw")
+# x.ecg.plot_qc_segment(input_index=None, template_data='wavelet')
+
+# Figure out what to do with first beats that get missed
+    # Thought: run peak detection on entire file (separate from quality check), include all peak indexes, and then
+    # remove ones that fall in invalid regions
