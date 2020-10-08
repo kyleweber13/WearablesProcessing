@@ -3,12 +3,15 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.stats
+import ImportEDF
+import math
 
 
-class EcgComp:
+class ECGs:
 
     def __init__(self, subj_id=None, age=0, load_accel=False,
                  stingray_file=None, fastfix_file=None, electrode_file=None):
+        """Reads in and processed ECG data."""
 
         self.subj_id = subj_id
         self.age = age
@@ -156,13 +159,114 @@ class EcgComp:
         plt.legend()
 
 
-ecg = EcgComp(subj_id="007", age=26, load_accel=False,
-              electrode_file="/Users/kyleweber/Desktop/007_Test/007_Electrodes.edf",
-              stingray_file="/Users/kyleweber/Desktop/007_Test/007_Stingray.edf")
+class Accels:
 
-# ecg.load_data()
+    def __init__(self, la_filepath, ra_filepath, lw_filepath, epoch_len):
+        """Reads in and epochs GENEActiv accelerometer data."""
+
+        self.la_filepath = la_filepath
+        self.ra_filepath = ra_filepath
+        self.lw_filepath = lw_filepath
+        self.la = None
+        self.ra = None
+        self.lw = None
+        self.epoch_len = epoch_len
+
+    def import_data(self):
+
+        if self.la_filepath is not None:
+            self.la = ImportEDF.GENEActiv(filepath=self.la_filepath, start_offset=0, end_offset=0, load_raw=True)
+            self.la.timestamps = [datetime.strptime(str(i)[:-3], "%Y-%m-%dT%H:%M:%S.%f") for
+                                              i in self.la.timestamps]
+            self.la.epoch_stamps, self.la.svm = self.epoch_data(self.la)
+            self.la.name = "LAnkle"
+
+        if self.ra_filepath is not None:
+            self.ra = ImportEDF.GENEActiv(filepath=self.ra_filepath, start_offset=0, end_offset=0, load_raw=True)
+            self.ra.timestamps = [datetime.strptime(str(i)[:-3], "%Y-%m-%dT%H:%M:%S.%f") for
+                                  i in self.ra.timestamps]
+            self.ra.epoch_stamps, self.ra.svm = self.epoch_data(self.ra)
+            self.ra.name = "RAnkle"
+
+        if self.lw_filepath is not None:
+            self.lw = ImportEDF.GENEActiv(filepath=self.lw_filepath, start_offset=0, end_offset=0, load_raw=True)
+            self.lw.timestamps = [datetime.strptime(str(i)[:-3], "%Y-%m-%dT%H:%M:%S.%f") for
+                                  i in self.lw.timestamps]
+            self.lw.epoch_stamps, self.lw.svm = self.epoch_data(self.lw)
+            self.lw.name = "LWrist"
+
+    def epoch_data(self, raw_data):
+        """Epochs accelerometer data into specified epoch length using raw data."""
+
+        # Calculates epochs if from_processed is False
+        print("\n" + "Epoching using raw data...")
+
+        epoch_stamps = raw_data.timestamps[::self.epoch_len * raw_data.sample_rate]
+
+        # Calculates activity counts
+        svm = []
+        for i in range(0, len(raw_data.vm), int(raw_data.sample_rate * self.epoch_len)):
+
+            if i + self.epoch_len * raw_data.sample_rate > len(raw_data.vm):
+                break
+
+            vm_sum = sum(raw_data.vm[i:i + self.epoch_len * raw_data.sample_rate])
+
+            # Bug handling: when we combine multiple EDF files they are zero-padded
+            # When vector magnitude is calculated, it is 1
+            # Any epoch where the values were all the epoch length * sampling rate (i.e. a VM of 1 for each data point)
+            # becomes 0
+            if vm_sum == self.epoch_len * raw_data.sample_rate:
+                vm_sum = 0
+
+            svm.append(round(vm_sum, 5))
+
+        return epoch_stamps, svm
+
+
+class SensorFusion:
+
+    def __init__(self, ecg_class_obj, accel_class_obj):
+        """Stores ECG and accelerometer data in one class object."""
+
+        self.ecg = ecg_class_obj
+        self.accel = accel_class_obj
+
+    def plot_epoched_ankles_hr(self, ecg_data):
+
+        fig, (ax1, ax2) = plt.subplots(2, sharex='col')
+
+        if self.accel.la is not None:
+            ax1.plot(self.accel.la.epoch_stamps[0:len(self.accel.la.svm)],
+                     self.accel.la.svm[0:len(self.accel.la.epoch_stamps)],
+                     color='dodgerblue', label="LAnkle")
+        if self.accel.ra is not None:
+            ax1.plot(self.accel.ra.epoch_stamps[:len(self.accel.ra.svm)],
+                     self.accel.ra.svm[:len(self.accel.ra.epoch_stamps)], color='black', label="RAnkle")
+
+        ax1.set_ylabel("Counts")
+        ax1.legend()
+
+        ax2.plot(ecg_data.epoch_timestamps, ecg_data.valid_hr, color='red', label=ecg_data.name)
+        ax2.set_ylabel("HR (bpm)")
+
+
+ecg = ECGs(subj_id="007", age=26, load_accel=False,
+           electrode_file="/Users/kyleweber/Desktop/007_Test/007_Electrodes.edf")
+              #stingray_file="/Users/kyleweber/Desktop/007_Test/007_Stingray.edf")
+
+ecg.load_data()
 # ecg.compare_raw(ecg.stingray, ecg.electrode)
 # ecg.compare_hr(ecg, ecg.stingray, ecg.electrode)
 # ecg.compare_valid_epochs(ecg.stingray, ecg.electrode)
 # ecg.compare_valid_epochs_scatter(ecg.stingray, ecg.electrode)
 # ecg.bland_altman(ecg.electrode, ecg.stingray)
+
+acc = Accels(la_filepath="/Users/kyleweber/Desktop/007_Test/007_Test_GENEActiv_LA_Accelerometer.edf",
+             ra_filepath="/Users/kyleweber/Desktop/007_Test/007_Test_GENEActiv_RA_Accelerometer.edf",
+             lw_filepath="/Users/kyleweber/Desktop/007_Test/007_Test_GENEActiv_LW_Accelerometer.edf",
+             epoch_len=15)
+acc.import_data()
+
+x = SensorFusion(ecg_class_obj=ecg, accel_class_obj=acc)
+#x.plot_epoched_ankles_hr(ecg_data=ecg.electrode)
