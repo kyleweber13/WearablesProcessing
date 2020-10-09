@@ -13,6 +13,8 @@ import csv
 import progressbar
 from matplotlib.ticker import PercentFormatter
 from random import randint
+import matplotlib.dates as mdates
+from ImportEDF import Bittium
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -79,7 +81,6 @@ class ECG:
         self.load_raw = load_raw
         self.load_accel = load_accel
         self.from_processed = from_processed
-        self.write_results = write_results
 
         self.accel_sample_rate = 1
         self.accel_x = None
@@ -119,7 +120,7 @@ class ECG:
             self.load_processed()
 
         # List of epoched heart rates but any invalid epoch is marked as None instead of 0 (as is self.epoch_hr)
-        self.valid_hr = [self.epoch_hr[i] if self.epoch_validity[i] == "Valid"
+        self.valid_hr = [self.epoch_hr[i] if self.epoch_validity[i] == 0
                          else None for i in range(len(self.epoch_hr))]
 
         self.quality_report = self.generate_quality_report()
@@ -129,6 +130,8 @@ class ECG:
         self.perc_hrr = None
         self.epoch_intensity = None
         self.epoch_intensity_totals = None
+
+        self.nonwear = None
 
     def epoch_accel(self):
 
@@ -171,7 +174,7 @@ class ECG:
             avg_voltage.append(qc.volt_range)
 
             if qc.valid_period:
-                validity_list.append(0)
+                validity_list.append("Valid")
                 epoch_hr.append(round(qc.hr, 2))
                 rr_sd.append(qc.rr_sd)
 
@@ -183,7 +186,7 @@ class ECG:
                 r_peaks = sorted(r_peaks)
 
             if not qc.valid_period:
-                validity_list.append(1)
+                validity_list.append("Invalid")
                 epoch_hr.append(0)
                 rr_sd.append(0)
 
@@ -204,31 +207,8 @@ class ECG:
         hours_lost = round(invalid_epochs / (60 / self.epoch_len) / 60, 2)  # hours of invalid data
         perc_invalid = round(invalid_epochs / len(self.epoch_validity) * 100, 1)  # percent of invalid data
 
-        # Longest valid period
-        longest_valid = count = 0
-        current = ''
-        for epoch in self.epoch_validity:
-            if epoch == current and epoch == 0:
-                count += 1
-            else:
-                count = 1
-                current = epoch
-            longest_valid = max(count, longest_valid)
-
-        # Longest invalid
-        longest_invalid = count = 0
-        current = ''
-        for epoch in self.epoch_validity:
-            if epoch == current and epoch == 1:
-                count += 1
-            else:
-                count = 1
-                current = epoch
-            longest_invalid = max(count, longest_invalid)
-
         quality_report = {"Invalid epochs": invalid_epochs, "Hours lost": hours_lost,
                           "Percent invalid": perc_invalid,
-                          "Longest valid period": longest_valid, "Longest invalid period": longest_invalid,
                           "Average valid duration (minutes)": None}
 
         print("-{}% of the data is valid.".format(round(100 - perc_invalid), 3))
@@ -524,6 +504,85 @@ class ECG:
             validity_data.plot_steps()
 
         return validity_data
+
+    def calculate_nonwear(self, epoch_len=15, plot_data=True):
+
+
+        # First accel check: SD and range below threshold calculations ------------------------------------------------
+        accel_nw = []
+
+        for i in np.arange(0, len(self.accel_x), self.accel_sample_rate * epoch_len):
+            sd_x = np.std(x.accel_x[i:i + self.accel_sample_rate * epoch_len])
+            sd_y = np.std(x.accel_y[i:i + self.accel_sample_rate * epoch_len])
+            sd_z = np.std(x.accel_z[i:i + self.accel_sample_rate * epoch_len])
+            axes_below_thresh = int(sd_x <= 3) + int(sd_y <= 3) + int(sd_z <= 3)
+
+            range_x = max(x.accel_x[i:i + self.accel_sample_rate * epoch_len]) - \
+                      min(self.accel_x[i:i + self.accel_sample_rate * epoch_len])
+            range_y = max(x.accel_y[i:i + self.accel_sample_rate * epoch_len]) - \
+                      min(self.accel_y[i:i + self.accel_sample_rate * epoch_len])
+            range_z = max(x.accel_z[i:i + self.accel_sample_rate * epoch_len]) - \
+                      min(self.accel_z[i:i + self.accel_sample_rate * epoch_len])
+
+            axes_below_range = int(range_x <= 50) + int(range_y <= 50) + int(range_z <= 50)
+
+            if axes_below_range >= 2 or axes_below_thresh >= 2:
+                accel_nw.append("Nonwear")
+            else:
+                accel_nw.append("Wear")
+
+        # Combines accelerometer and ECG non-wear characteristics: epoch-by-epoch -------------------------------------
+        df_ecg = pd.DataFrame(list(zip(self.epoch_timestamps, self.epoch_validity,
+                                       self.avg_voltage, self.svm, accel_nw)),
+                              columns=["Stamp", "Validity", "VoltRange", "SVM", "AccelNW"])
+
+        nw = []
+        for epoch in df_ecg.itertuples():
+            if epoch.Validity == "Invalid" and epoch.AccelNW == "Nonwear" and epoch.VoltRange <= 400:
+                nw.append("Nonwear")
+            else:
+                nw.append("Wear")
+
+        # 5-minute windows --------------------------------------------------------------------------------------------
+        t0 = datetime.now()
+        final_nw = np.zeros(len(nw))
+        for i in range(len(nw)):
+
+            if final_nw[i] == "Wear" or final_nw[i] == "Nonwear":
+                pass
+
+            if nw[i:i + 20].count("Nonwear") >= 19:
+                final_nw[i:i + 20] = 1
+
+                for j in range(i, len(nw)):
+                    if nw[j] == "Nonwear":
+                        pass
+                    if nw[j] == "Wear":
+                        stop_ind = j
+                        if j > i:
+                            final_nw[i:stop_ind] = 1
+
+            else:
+                final_nw[i] = 0
+
+        final_nw = ["Nonwear" if i == 1 else "Wear" for i in final_nw]
+        t1 = datetime.now()
+        print("Algorithm time = {} seconds.".format(round((t1 - t0).total_seconds(), 1)))
+
+        if plot_data:
+            fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(10, 7))
+            plt.suptitle(self.subject_id)
+            ax1.plot(self.timestamps[::int(5 * self.sample_rate / 250)],
+                     self.filtered[::int(5 * self.sample_rate / 250)], color='red')
+            ax1.set_ylabel("ECG Voltage")
+
+            ax2.plot(self.timestamps[::int(10 * self.sample_rate / 250)], self.accel_x, color='dodgerblue')
+            ax2.set_ylabel("Accel VM")
+
+            ax3.plot(self.epoch_timestamps, self.epoch_validity, color='black')
+            ax3.fill_between(x=self.epoch_timestamps, y1="Wear", y2=final_nw, color='grey')
+
+        return final_nw
 
 
 class DetectAllPeaks:
@@ -901,3 +960,15 @@ class CheckQuality:
 # Figure out what to do with first beats that get missed
     # Thought: run peak detection on entire file (separate from quality check), include all peak indexes, and then
     # remove ones that fall in invalid regions
+
+
+x = ECG(subject_id=3028, filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3028_01_BF.edf",
+        output_dir=None, processed_folder=None,
+                 processed_file=None,
+                 age=0, start_offset=0, end_offset=0,
+                 rest_hr_window=60, n_epochs_rest=10,
+                 epoch_len=15, load_accel=True,
+                 filter_data=False, low_f=1, high_f=30, f_type="bandpass",
+                 load_raw=True, from_processed=False)
+
+x.nonwear = x.calculate_nonwear(epoch_len=15, plot_data=True)
