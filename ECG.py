@@ -507,7 +507,6 @@ class ECG:
 
     def calculate_nonwear(self, epoch_len=15, plot_data=True):
 
-
         # First accel check: SD and range below threshold calculations ------------------------------------------------
         accel_nw = []
 
@@ -570,17 +569,37 @@ class ECG:
         print("Algorithm time = {} seconds.".format(round((t1 - t0).total_seconds(), 1)))
 
         if plot_data:
+
+            print("Generating plot...")
+
+            manual_log = pd.read_excel("/Users/kyleweber/Desktop/BittiumFF_Nonwear.xlsx")
+            manual_log = manual_log.loc[manual_log["ID"] == self.subject_id]
+
             fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(10, 7))
             plt.suptitle(self.subject_id)
             ax1.plot(self.timestamps[::int(5 * self.sample_rate / 250)],
-                     self.filtered[::int(5 * self.sample_rate / 250)], color='red')
+                     self.raw[::int(5 * self.sample_rate / 250)], color='black')
             ax1.set_ylabel("ECG Voltage")
 
             ax2.plot(self.timestamps[::int(10 * self.sample_rate / 250)], self.accel_x, color='dodgerblue')
             ax2.set_ylabel("Accel VM")
 
-            ax3.plot(self.epoch_timestamps, self.epoch_validity, color='black')
-            ax3.fill_between(x=self.epoch_timestamps, y1="Wear", y2=final_nw, color='grey')
+            ax3.plot(self.epoch_timestamps[0:min([len(self.epoch_timestamps), len(self.epoch_validity)])],
+                     self.epoch_validity[0:min([len(self.epoch_timestamps), len(self.epoch_validity)])], color='black')
+            ax3.fill_between(x=self.epoch_timestamps[0:min([len(self.epoch_timestamps), len(final_nw)])],
+                             y1="Wear", y2=final_nw, color='grey')
+
+            if manual_log.shape[0] >= 1:
+                for row in manual_log.itertuples():
+                    ax1.fill_between(x=[row.Start, row.Stop], y1=min(self.filtered[::5]), y2=max(self.filtered[::5]),
+                                     color='red', alpha=.5)
+                    ax2.fill_between(x=[row.Start, row.Stop], y1=min(self.accel_x), y2=max(self.accel_x),
+                                     color='red', alpha=.5)
+
+            xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
+
+            ax3.xaxis.set_major_formatter(xfmt)
+            plt.xticks(rotation=45, fontsize=8)
 
         return final_nw
 
@@ -962,13 +981,23 @@ class CheckQuality:
     # remove ones that fall in invalid regions
 
 
-x = ECG(subject_id=3028, filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3028_01_BF.edf",
+"""
+x = ECG(subject_id=3035, filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3035_01_BF.edf",
         output_dir=None, processed_folder=None,
-                 processed_file=None,
-                 age=0, start_offset=0, end_offset=0,
-                 rest_hr_window=60, n_epochs_rest=10,
-                 epoch_len=15, load_accel=True,
-                 filter_data=False, low_f=1, high_f=30, f_type="bandpass",
-                 load_raw=True, from_processed=False)
+        processed_file=None,
+        age=0, start_offset=0, end_offset=0,
+        rest_hr_window=60, n_epochs_rest=10,
+        epoch_len=15, load_accel=True,
+        filter_data=False, low_f=1, high_f=30, f_type="bandpass",
+        load_raw=True, from_processed=False)
+
+
+fig, (ax1, ax2) = plt.subplots(2, sharex='col')
+ax1.plot(x.timestamps[::5], x.raw[::5], color='red')
+ax2.plot(x.timestamps[::10], x.accel_x, color='black')
+xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
+ax2.xaxis.set_major_formatter(xfmt)
+plt.xticks(rotation=45, fontsize=8)
 
 x.nonwear = x.calculate_nonwear(epoch_len=15, plot_data=True)
+"""
