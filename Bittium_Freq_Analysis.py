@@ -14,14 +14,16 @@ import random
 from ECG import ECG
 import ImportEDF
 from matplotlib.widgets import CheckButtons
+import scipy.stats as stats
 
 
 class Data:
 
-    def __init__(self, subj_id, start_index=None, end_index=None):
+    def __init__(self, subj_id, start_index=None, end_index=None, seg_length=15):
         self.subj_id = subj_id
         self.start_index = start_index
         self.end_index = end_index
+        self.seg_length = seg_length
 
         self.filepath = "/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_BF.edf".format(subj_id)
         self.ecg = None
@@ -39,7 +41,7 @@ class Data:
                                 "ECG_Index": 0, "Valid_ECG": 0, "ECG_volt_range": 0, "ECG_dom_f": 0, "ECG_power": 0,
                                 "SD_X": 0, "SD_Y": 0, "SD_Z": 0, "SVM": 0, "Accel_dom_f": 0,
                                 "Accel_power_X": 0, "Accel_power_Y": 0, "Accel_power_Z": 0,
-                                "Visual_nonwear": 0}
+                                "Visual_nonwear": 0, "DataLength": self.seg_length, "VisualLength": 0}
 
     def import_ecg(self):
 
@@ -78,47 +80,48 @@ class Data:
         if write_dict:
             self.append_parameters_dict("/Users/kyleweber/Desktop/ECG Non-Wear/ECG_Nonwear_Parameters.csv")
 
-    def run_ecg_fft(self, start=None, seg_length=15, show_plot=True):
+    def run_ecg_fft(self, start=None, show_plot=True):
 
-        print("\nPerforming FFT on ECG data starting at index {} using {}-second windows...".format(start, seg_length))
+        print("\nPerforming FFT on ECG data starting at index {} using {}-second windows...".format(start,
+                                                                                                    self.seg_length))
 
         if start is None:
-            start = random.randint(0, len(self.ecg.raw) - seg_length * self.ecg.sample_rate)
+            start = random.randint(0, len(self.ecg.raw) - self.seg_length * self.ecg.sample_rate)
 
-        end = start + seg_length * self.ecg.sample_rate
+        end = start + self.seg_length * self.ecg.sample_rate
 
         self.start_ind = start
 
         raw_fft = scipy.fft.fft(self.ecg.raw[start:end])
         filt_fft = scipy.fft.fft(self.ecg.filtered[start:end])
 
-        xf = np.linspace(0.0, 1.0 / (2.0 * (1 / self.ecg.sample_rate)), (seg_length * self.ecg.sample_rate) // 2)
+        xf = np.linspace(0.0, 1.0 / (2.0 * (1 / self.ecg.sample_rate)), (self.seg_length * self.ecg.sample_rate) // 2)
 
         if show_plot:
             fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(10, 8))
             plt.suptitle("Index = {}".format(start))
             plt.subplots_adjust(hspace=.35)
 
-            ax1.plot(np.arange(0, seg_length * self.ecg.sample_rate) / self.ecg.sample_rate,
+            ax1.plot(np.arange(0, self.seg_length * self.ecg.sample_rate) / self.ecg.sample_rate,
                      self.ecg.raw[start:end],
                      color='red', label='Raw')
-            ax1.plot(np.arange(0, seg_length * self.ecg.sample_rate) / self.ecg.sample_rate,
+            ax1.plot(np.arange(0, self.seg_length * self.ecg.sample_rate) / self.ecg.sample_rate,
                      self.ecg.filtered[start:end],
                      color='black', label='Filt')
             ax1.legend()
             ax1.set_xlabel("Seconds")
             ax1.set_ylabel("Voltage")
 
-            ax2.plot(xf, 2.0 / (seg_length * self.ecg.sample_rate) / 2 *
-                     np.abs(raw_fft[0:(seg_length * self.ecg.sample_rate) // 2]),
+            ax2.plot(xf, 2.0 / (self.seg_length * self.ecg.sample_rate) / 2 *
+                     np.abs(raw_fft[0:(self.seg_length * self.ecg.sample_rate) // 2]),
                      color='red', label="Raw")
 
             ax2.set_ylabel("Power")
             ax2.set_xlabel("Frequency (Hz)")
             ax2.legend()
 
-            ax3.plot(xf, 2.0 / (seg_length * self.ecg.sample_rate) / 2 *
-                     np.abs(filt_fft[0:(seg_length * self.ecg.sample_rate) // 2]),
+            ax3.plot(xf, 2.0 / (self.seg_length * self.ecg.sample_rate) / 2 *
+                     np.abs(filt_fft[0:(self.seg_length * self.ecg.sample_rate) // 2]),
                      color='black', label="Filt")
             ax3.fill_between(x=[self.ecg.low_f, self.ecg.high_f], y1=plt.ylim()[0], y2=plt.ylim()[1],
                              color='green', alpha=.5, label="Bandpass")
@@ -127,8 +130,8 @@ class Data:
             ax3.legend()
 
         df_raw_fft = pd.DataFrame(list(zip(xf,
-                                           2.0 / (seg_length * self.ecg.sample_rate) /
-                                           2 * np.abs(raw_fft[0:(seg_length * self.ecg.sample_rate) // 2]))),
+                                           2.0 / (self.seg_length * self.ecg.sample_rate) /
+                                           2 * np.abs(raw_fft[0:(self.seg_length * self.ecg.sample_rate) // 2]))),
                                   columns=["Frequency", "Power"])
 
         df = df_raw_fft.loc[df_raw_fft["Frequency"] >= .05]
@@ -139,35 +142,39 @@ class Data:
 
         return df_raw_fft
 
-    def run_accel_fft(self, start=None, seg_length=15, show_plot=True):
+    def run_accel_fft(self, start=None, show_plot=True):
 
         if start is not None:
             print("\nPerforming FFT on accelerometer data from index {} using "
-                  "{}-second epochs...".format(start, seg_length))
+                  "{}-second epochs...".format(start, self.seg_length))
         if start is None:
             print("\nPerforming FFT on accelerometer data from random segment using "
-                  "{}-second epochs...".format(seg_length))
+                  "{}-second epochs...".format(self.seg_length))
 
         if start is None:
-            start = random.randint(0, len(self.ecg.accel_x) - seg_length * self.ecg.accel_sample_rate)
+            start = random.randint(0, len(self.ecg.accel_x) - self.seg_length * self.ecg.accel_sample_rate)
 
-        end = start + seg_length * self.ecg.accel_sample_rate
+        end = start + self.seg_length * self.ecg.accel_sample_rate
 
         fft_x = scipy.fft.fft(self.ecg.accel_x[start:end])
         fft_y = scipy.fft.fft(self.ecg.accel_y[start:end])
         fft_z = scipy.fft.fft(self.ecg.accel_z[start:end])
+        fft_vm = scipy.fft.fft(self.ecg.accel_vm[start:end])
 
         xf = np.linspace(0.0, 1.0 / (2.0 * (1 / self.ecg.accel_sample_rate)),
-                         (seg_length * self.ecg.accel_sample_rate) // 2)
+                         (self.seg_length * self.ecg.accel_sample_rate) // 2)
 
         df_accel_fft = pd.DataFrame(list(zip(xf,
-                                             2.0 / (seg_length * self.ecg.accel_sample_rate) /
-                                             2 * np.abs(fft_x[0:(seg_length * self.ecg.accel_sample_rate) // 2]),
-                                             2.0 / (seg_length * self.ecg.accel_sample_rate) /
-                                             2 * np.abs(fft_y[0:(seg_length * self.ecg.accel_sample_rate) // 2]),
-                                             2.0 / (seg_length * self.ecg.accel_sample_rate) /
-                                             2 * np.abs(fft_z[0:(seg_length * self.ecg.accel_sample_rate) // 2]))),
-                                    columns=["Frequency", "Power_X", "Power_Y", "Power_Z"])
+                                             2.0 / (self.seg_length * self.ecg.accel_sample_rate) /
+                                             2 * np.abs(fft_x[0:(self.seg_length * self.ecg.accel_sample_rate) // 2]),
+                                             2.0 / (self.seg_length * self.ecg.accel_sample_rate) /
+                                             2 * np.abs(fft_y[0:(self.seg_length * self.ecg.accel_sample_rate) // 2]),
+                                             2.0 / (self.seg_length * self.ecg.accel_sample_rate) /
+                                             2 * np.abs(fft_z[0:(self.seg_length * self.ecg.accel_sample_rate) // 2]),
+                                             2.0 / (self.seg_length * self.ecg.accel_sample_rate) /
+                                             2 * np.abs(fft_vm[0:(self.seg_length * self.ecg.accel_sample_rate) // 2])
+                                             )),
+                                    columns=["Frequency", "Power_X", "Power_Y", "Power_Z", "Power_VM"])
 
         df_accel_fft = df_accel_fft.loc[df_accel_fft["Frequency"] >= .05]
 
@@ -177,8 +184,10 @@ class Data:
                                         df_accel_fft["Power_Y"].max()]["Frequency"].values[0], 3)
         dom_fz = round(df_accel_fft.loc[df_accel_fft["Power_Z"] ==
                                         df_accel_fft["Power_Z"].max()]["Frequency"].values[0], 3)
+        dom_fvm = round(df_accel_fft.loc[df_accel_fft["Power_VM"] ==
+                                        df_accel_fft["Power_VM"].max()]["Frequency"].values[0], 3)
 
-        self.parameters_dict["Accel_dom_f"] = [dom_fx, dom_fy, dom_fz]
+        self.parameters_dict["Accel_dom_f"] = [dom_fx, dom_fy, dom_fz, dom_fvm]
         print("-Dominant frequencies: X = {}Hz, Y = {}Hz, Z = {}Hz.".format(dom_fx, dom_fy, dom_fz))
 
         if show_plot:
@@ -186,13 +195,13 @@ class Data:
             plt.suptitle("Index = {}".format(start))
             plt.subplots_adjust(hspace=.35)
 
-            ax1.plot(np.arange(0, seg_length * self.ecg.accel_sample_rate) / self.ecg.accel_sample_rate,
+            ax1.plot(np.arange(0, self.seg_length * self.ecg.accel_sample_rate) / self.ecg.accel_sample_rate,
                      self.ecg.accel_x[start:end],
                      color='red', label='X')
-            ax1.plot(np.arange(0, seg_length * self.ecg.accel_sample_rate) / self.ecg.accel_sample_rate,
+            ax1.plot(np.arange(0, self.seg_length * self.ecg.accel_sample_rate) / self.ecg.accel_sample_rate,
                      self.ecg.accel_y[start:end],
                      color='black', label='Y')
-            ax1.plot(np.arange(0, seg_length * self.ecg.accel_sample_rate) / self.ecg.accel_sample_rate,
+            ax1.plot(np.arange(0, self.seg_length * self.ecg.accel_sample_rate) / self.ecg.accel_sample_rate,
                      self.ecg.accel_z[start:end],
                      color='dodgerblue', label='Z')
             ax1.legend()
@@ -207,6 +216,9 @@ class Data:
 
             ax2.plot(df_accel_fft["Frequency"], df_accel_fft["Power_Z"],
                      color='dodgerblue', label="Z")
+
+            ax2.plot(df_accel_fft["Frequency"], df_accel_fft["Power_VM"],
+                     color='grey', label="VM")
 
             ax2.set_ylabel("Power")
             ax2.set_xlabel("Frequency (Hz)")
@@ -294,10 +306,10 @@ class Data:
             ax2.set_ylabel("Normalized power")
             ax2.set_xlabel("Hz")
 
-    def compare_accel_ffts(self, ind1, ind2, seg_length=30):
+    def compare_accel_ffts(self, ind1, ind2):
 
         fig, (ax1, ax2) = plt.subplots(2, sharex='col')
-        df_accel_fft = self.run_accel_fft(ind1, seg_length=seg_length, show_plot=False)
+        df_accel_fft = self.run_accel_fft(ind1, show_plot=False)
         ax1.plot(df_accel_fft["Frequency"],
                  [i / df_accel_fft["Power_Z"].sum() for i in df_accel_fft["Power_Z"].cumsum()],
                  label="Z_Sleep", color='black')
@@ -306,7 +318,7 @@ class Data:
         ax1.set_ylabel("Power")
         ax1.legend()
 
-        df_accel_fft = self.run_accel_fft(ind2, seg_length=seg_length, show_plot=False)
+        df_accel_fft = self.run_accel_fft(ind2, show_plot=False)
         ax2.plot(df_accel_fft["Frequency"],
                  [i / df_accel_fft["Power_Z"].sum() for i in df_accel_fft["Power_Z"].cumsum()],
                  label="Z_Nonwear", color='black')
@@ -316,7 +328,7 @@ class Data:
         ax2.set_xlabel("Frequency (Hz)")
         ax2.legend()
 
-    def calculate_nonwear(self, epoch_len=15, plot_data=True):
+    def calculate_nonwear(self, plot_data=True):
 
         def find_nonwear():
             # First accel check: SD and range below threshold calculations -------------------------------------------
@@ -324,18 +336,18 @@ class Data:
 
             accel_nw = []
 
-            for i in np.arange(0, len(self.ecg.accel_x), self.ecg.accel_sample_rate * epoch_len):
-                sd_x = np.std(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * epoch_len])
-                sd_y = np.std(self.ecg.accel_y[i:i + self.ecg.accel_sample_rate * epoch_len])
-                sd_z = np.std(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * epoch_len])
+            for i in np.arange(0, len(self.ecg.accel_x), self.ecg.accel_sample_rate * self.seg_length):
+                sd_x = np.std(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * self.seg_length])
+                sd_y = np.std(self.ecg.accel_y[i:i + self.ecg.accel_sample_rate * self.seg_length])
+                sd_z = np.std(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * self.seg_length])
                 axes_below_thresh = int(sd_x <= 3) + int(sd_y <= 3) + int(sd_z <= 3)
 
-                range_x = max(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * epoch_len]) - \
-                          min(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * epoch_len])
-                range_y = max(self.ecg.accel_y[i:i + self.ecg.accel_sample_rate * epoch_len]) - \
-                          min(self.ecg.accel_y[i:i + self.ecg.accel_sample_rate * epoch_len])
-                range_z = max(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * epoch_len]) - \
-                          min(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * epoch_len])
+                range_x = max(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * self.seg_length]) - \
+                          min(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * self.seg_length])
+                range_y = max(self.ecg.accel_y[i:i + self.ecg.accel_sample_rate * self.seg_length]) - \
+                          min(self.ecg.accel_y[i:i + self.ecg.accel_sample_rate * self.seg_length])
+                range_z = max(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * self.seg_length]) - \
+                          min(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * self.seg_length])
 
                 axes_below_range = int(range_x <= 50) + int(range_y <= 50) + int(range_z <= 50)
 
@@ -444,7 +456,7 @@ class Data:
 
                 if self.nonwear[epoch_ind] == "Nonwear":
 
-                    self.ecg_fft = self.run_ecg_fft(start=i, seg_length=epoch_len, show_plot=False)
+                    self.ecg_fft = self.run_ecg_fft(start=i, show_plot=False)
                     self.ecg_fft["Normalized_CumulativePower"] = [i / self.ecg_fft["Power"].sum() for
                                                                   i in self.ecg_fft["Power"].cumsum()]
 
@@ -463,7 +475,7 @@ class Data:
 
     def complete_parameter_dict(self):
 
-        self.parameters_dict["ECG_Index"]  = self.start_index
+        self.parameters_dict["ECG_Index"]  = self.start_index + 15 * self.ecg.sample_rate
         self.parameters_dict["Valid_ECG"] = self.ecg.epoch_validity[0]
         self.parameters_dict["ECG_volt_range"] = self.ecg.avg_voltage[0]
 
@@ -471,6 +483,8 @@ class Data:
         self.parameters_dict["SD_Y"] = round(np.std(self.ecg.accel_y), 2)
         self.parameters_dict["SD_Z"] = round(np.std(self.ecg.accel_z), 2)
         self.parameters_dict["SVM"] = round(sum(self.ecg.accel_vm), 2)
+
+        self.parameters_dict["VisualLength"] = int(self.end_index / self.ecg.sample_rate)
 
     def append_parameters_dict(self, data_file):
 
@@ -480,47 +494,113 @@ class Data:
             dict_writer = DictWriter(write_obj, fieldnames=self.parameters_dict.keys())
 
             dict_writer.writerow(self.parameters_dict)
-            print("New data appended to {}".format(data_file))
+            print("\nNew data appended to {}".format(data_file))
+
+        df = pd.read_csv(data_file, usecols=["ID", "VisualNonwear"])
+
+        print("-File contains {} records "
+              "({} non-wear periods).".format(df.shape[0], df.loc[df["VisualNonwear"]=="Nonwear"].shape[0]))
 
 
 rand_sub = random.randint(3002, 3044)
 start_time, end_time, fs, duration = \
     ImportEDF.check_file("/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_BF.edf".format(rand_sub),
                          print_summary=False)
-rand_start = randint(0, duration * fs - 15 * fs)
+# rand_start = randint(0, duration * fs - 15 * fs)
+rand_start = randint(0, duration * fs - 45 * fs)
 
-x = Data(subj_id=rand_sub, start_index=rand_start, end_index=30 * fs)
+x = Data(subj_id=rand_sub, start_index=rand_start, end_index=45 * fs, seg_length=15)
 x.import_ecg()
 
-x.ecg_fft = x.run_ecg_fft(start=0, seg_length=15, show_plot=False)
+x.ecg_fft = x.run_ecg_fft(start=15*250, show_plot=False)
 ecg_cutoff = x.plot_ecg_cumulative_fft(threshold=.9, show_plot=False)
 
-x.accel_fft = x.run_accel_fft(start=0, seg_length=15, show_plot=False)
-x.plot_accel_cumulative_fft(threshold=.25, axis="X", show_plot=False)
+x.accel_fft = x.run_accel_fft(start=15*25, show_plot=False)
+x.plot_accel_cumulative_fft(threshold=.25, axis="X", show_plot=True)
 x.plot_accel_cumulative_fft(threshold=.25, axis="Y", show_plot=False)
 x.plot_accel_cumulative_fft(threshold=.25, axis="Z", show_plot=False)
 
 x.complete_parameter_dict()
 
 
-# x = Data(3028)
-# x.import_ecg()
-# x.import_gold_standard_log()
-# x.nonwear = x.calculate_nonwear(epoch_len=15, plot_data=True)
+def get_value(label):
+    if label == "Nonwear":
+        x.parameters_dict["Visual_nonwear"] = "Nonwear"
+        print("Period set as non-wear.")
+    if label == "Wear":
+        x.parameters_dict["Visual_nonwear"] = "Wear"
+        print("Period set as wear.")
+    if label == "Unsure":
+        x.parameters_dict["Visual_nonwear"] = "Unsure"
+        print("Period marked as unsure if non-wear.")
+
+    plt.draw()
+    plt.close("all")
+
+    x.append_parameters_dict("/Users/kyleweber/Desktop/ECG Non-Wear/ECG_Nonwear_Parameters.csv")
+
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(10, 6), sharex='col')
+plt.suptitle("{}: {}, {}".format(x.subj_id, x.parameters_dict["Valid_ECG"],
+                                 datetime.strftime(datetime.strptime(str(x.ecg.timestamps[0])[:-3],
+                                                                     "%Y-%m-%dT%H:%M:%S.%f"), "%I:%M:%S %p")))
+if x.ecg.epoch_validity[0] == 'Valid':
+    ax1.plot(np.arange(0, len(x.ecg.raw)) / x.ecg.sample_rate, x.ecg.raw, color='green', linestyle='-', label='raw')
+    ax2.plot(np.arange(0, len(x.ecg.filtered)) / x.ecg.sample_rate, x.ecg.filtered, color='green', label='filt')
+if x.ecg.epoch_validity[0] == 'Invalid':
+    ax1.plot(np.arange(0, len(x.ecg.raw)) / x.ecg.sample_rate, x.ecg.raw, color='red', linestyle='-', label='raw')
+    ax2.plot(np.arange(0, len(x.ecg.filtered)) / x.ecg.sample_rate, x.ecg.filtered, color='red', label='filt')
+ax1.legend()
+ax2.legend()
+
+ax1.set_ylabel("Voltage")
+
+y_scale = ax1.get_ylim()
+if y_scale[1] - y_scale[0] <= 1000:
+    ax1.set_ylim(np.mean(x.ecg.raw) - 600, np.mean(x.ecg.raw) + 600)
+
+y_scale = ax2.get_ylim()
+if y_scale[1] - y_scale[0] <= 1000:
+    ax2.set_ylim(np.mean(x.ecg.filtered) - 600, np.mean(x.ecg.filtered) + 600)
+
+ax1.fill_between(x=[15, 30], y1=ax1.get_ylim()[0], y2=ax1.get_ylim()[1], color='grey', alpha=.25)
+ax2.fill_between(x=[15, 30], y1=ax2.get_ylim()[0], y2=ax2.get_ylim()[1], color='grey', alpha=.25)
+
+ax3.plot(np.arange(0, len(x.ecg.accel_vm)) / x.ecg.accel_sample_rate, x.ecg.accel_x, color='dodgerblue', label='x')
+ax3.plot(np.arange(0, len(x.ecg.accel_vm)) / x.ecg.accel_sample_rate, x.ecg.accel_y, color='red', label='y')
+ax3.plot(np.arange(0, len(x.ecg.accel_vm)) / x.ecg.accel_sample_rate, x.ecg.accel_z, color='black', label='z')
+ax3.legend()
+ax3.set_ylabel("mG")
+ax3.set_ylim(-2000, 2000)
+ax3.set_xlabel("Seconds")
+ax3.fill_between(x=[15, 30], y1=-2000, y2=2000, color='grey', alpha=.25)
+
+rax = plt.axes([.9, .5, .1, .15])
+check = CheckButtons(rax, ("Nonwear", "Wear", "Unsure"), (False, False, False))
+check.on_clicked(get_value)
+
+plt.show()
+
+"""
+x = Data(3028)
+x.import_ecg()
+x.import_gold_standard_log()
+x.nonwear = x.calculate_nonwear(epoch_len=15, plot_data=True)
 
 # ECG processing
-# x.ecg_fft = x.run_ecg_fft(start=int(1.22e7), seg_length=300, show_plot=True) # 3028, nonwear
-# x.ecg_fft = x.run_ecg_fft(start=int(14745000), seg_length=300, show_plot=True) # 3028, sleep, wear, clean
-# cumulative_cutoff = x.plot_ecg_cumulative_fft(.9)
+x.ecg_fft = x.run_ecg_fft(start=int(1.22e7), show_plot=True) # 3028, nonwear
+x.ecg_fft = x.run_ecg_fft(start=int(14745000), show_plot=True) # 3028, sleep, wear, clean
+cumulative_cutoff = x.plot_ecg_cumulative_fft(.9)
 
 # Accelerometer processing
-# x.accel_fft = x.run_accel_fft(start=1474500, seg_length=60, show_plot=True) # 3028, wear, sleep (1474500)
-# x.accel_fft = x.run_accel_fft(start=1200000, seg_length=300, show_plot=True)  # 3028, nonwear (120000)
-# x.accel_fft = x.run_accel_fft(start=200000, seg_length=1200, show_plot=True)  # 3028, wear, awake (200000)
-# plot_accel_cumulative_fft(x, .25, axis="Z", start=200000)
+x.accel_fft = x.run_accel_fft(start=1474500, show_plot=True) # 3028, wear, sleep (1474500)
+x.accel_fft = x.run_accel_fft(start=1200000, show_plot=True)  # 3028, nonwear (120000)
+x.accel_fft = x.run_accel_fft(start=200000, show_plot=True)  # 3028, wear, awake (200000)
+plot_accel_cumulative_fft(x, .25, axis="Z", start=200000)
 
-# x.compare_accel_ffts(ind1=1200000, ind2=1474500)  # 1200000 = nonwear; 1474500 = sleep
+x.compare_accel_ffts(ind1=1200000, ind2=1474500)  # 1200000 = nonwear; 1474500 = sleep
 
+"""
 
 """
 fig, (ax1, ax2) = plt.subplots(2, sharex='col')
@@ -547,27 +627,77 @@ plt.xlabel("Hz")
 """
 
 
-def get_value(label):
-    if label == "Nonwear":
-        x.parameters_dict["Visual_nonwear"] = "Nonwear"
-        print("Period set as non-wear.")
-    if label == "Wear":
-        x.parameters_dict["Visual_nonwear"] = "Wear"
-        print("Period set as wear.")
+class GoldStandardReview:
 
-    plt.draw()
-    plt.close("all")
+    def __init__(self, file="/Users/kyleweber/Desktop/ECG Non-Wear/ECG_Nonwear_Parameters.csv"):
 
-    x.append_parameters_dict("/Users/kyleweber/Desktop/ECG Non-Wear/ECG_Nonwear_Parameters.csv")
+        self.file = file
+
+        self.df = None
+        self.df_nw = None
+        self.df_valid = None
+        self.df_invalid_nonwear = None
+        self.df_invalid_wear = None
+
+        self.import_file()
+        self.format_accel_dom_f()
+
+    def import_file(self):
+
+        self.df = pd.read_csv(self.file)
+
+        self.df["Accel_avg"] = (self.df["SD_X"] + self.df["SD_Y"] + self.df["SD_Z"]) / 3
+        self.df_nw = self.df.loc[self.df["VisualNonwear"] == "Nonwear"]
+        self.df_valid = self.df.loc[self.df["Valid_ECG"] == "Valid"]
+        self.df_invalid_wear = self.df.loc[(self.df["Valid_ECG"] == "Invalid") &
+                                           (self.df["VisualNonwear"] == "Wear")]
+
+    def format_accel_dom_f(self):
+        self.df["Accel_dom_f_X"] = [self.df.iloc[i]["Accel_dom_f"][1:-1] for i in range(self.df.shape[0])]
+
+        l = [self.df["Accel_dom_f_X"].iloc[i].split(",") for i in range(self.df.shape[0])]
+        df = pd.DataFrame(l, columns=["Accel_dom_f_X", "Accel_dom_f_Y", "Accel_dom_f_Z"], dtype='float')
+        self.df["Accel_dom_f_X"] = df["Accel_dom_f_X"]
+        self.df["Accel_dom_f_Y"] = df["Accel_dom_f_Y"]
+        self.df["Accel_dom_f_Z"] = df["Accel_dom_f_Z"]
+
+        dead_data = self.df.drop("Accel_dom_f", axis=1)
+
+    def generate_boxplot(self, col_name="ECG_volt_range"):
+
+        boxprops = dict(linewidth=1.5)
+        medianprops = dict(linewidth=1.5)
+
+        units_dict = {"ECG_volt_range": "Voltage", "ECG_dom_f": "Hz", "SVM": "Counts", "Accel_avg": "Avg SD (mg)",
+                      "Accel_dom_f_X": "Hz", "Accel_dom_f_Y": "Hz", "Accel_dom_f_Z": "Hz", }
+
+        self.df.loc[self.df["VisualNonwear"] != "Unsure"].boxplot(column=[col_name],
+                                                                  by=["Valid_ECG", "VisualNonwear"],
+                                                                  grid=False,
+                                                                  boxprops=boxprops, medianprops=medianprops,
+                                                                  showfliers=False, showmeans=False,
+                                                                  figsize=(10, 6))
+        plt.ylabel(units_dict[col_name])
+
+    def plot_descriptive_stats(self, data="ECG_volt_range", error_bars="SD"):
+
+        tally = self.df.iloc[:, 2:].groupby(["VisualNonwear"]).count().transpose()
+        means = self.df.iloc[:, 2:].groupby(["VisualNonwear"]).mean().transpose()
+        stds = self.df.iloc[:, 2:].groupby(["VisualNonwear"]).std().transpose()
+
+        import scipy.stats
+
+        scipy.stats.t.ppf()
+        if error_bars == "SEM":
+            plt.bar(means.columns, means.loc[data], color=["darkgrey", "dodgerblue", "green"],
+                    edgecolor='black',
+                    alpha=.7, yerr=stds.loc[data] / np.sqrt(tally.loc[data]), capsize=4)
+
+        if error_bars == "STD" or error_bars == "SD":
+            plt.bar(means.columns, means.loc[data], color=["darkgrey", "dodgerblue", "green"],
+                    edgecolor='black',
+                    alpha=.7, yerr=stds.loc[data], capsize=4)
 
 
-fig, (ax1, ax2) = plt.subplots(2, figsize=(10, 6))
-
-ax1.plot(np.arange(0, len(x.ecg.filtered)) / x.ecg.sample_rate, x.ecg.filtered, color='red')
-ax2.plot(np.arange(0, len(x.ecg.accel_vm)) / x.ecg.accel_sample_rate, x.ecg.accel_vm, color='dodgerblue')
-
-rax = plt.axes([.9, .9, .1, .1])
-check = CheckButtons(rax, ("Nonwear", "Wear"), (False, False))
-check.on_clicked(get_value)
-
-plt.show()
+# x = GoldStandardReview()
+# x.generate_boxplot("Accel_dom_f_Z")
