@@ -15,6 +15,7 @@ from ECG import ECG
 import ImportEDF
 from matplotlib.widgets import CheckButtons
 import scipy.stats as stats
+import pingouin as pg
 
 
 class Data:
@@ -167,10 +168,13 @@ class Data:
         df_accel_fft = pd.DataFrame(list(zip(xf,
                                              2.0 / (self.seg_length * self.ecg.accel_sample_rate) /
                                              2 * np.abs(fft_x[0:(self.seg_length * self.ecg.accel_sample_rate) // 2]),
+
                                              2.0 / (self.seg_length * self.ecg.accel_sample_rate) /
                                              2 * np.abs(fft_y[0:(self.seg_length * self.ecg.accel_sample_rate) // 2]),
+
                                              2.0 / (self.seg_length * self.ecg.accel_sample_rate) /
                                              2 * np.abs(fft_z[0:(self.seg_length * self.ecg.accel_sample_rate) // 2]),
+
                                              2.0 / (self.seg_length * self.ecg.accel_sample_rate) /
                                              2 * np.abs(fft_vm[0:(self.seg_length * self.ecg.accel_sample_rate) // 2])
                                              )),
@@ -501,7 +505,7 @@ class Data:
         print("-File contains {} records "
               "({} non-wear periods).".format(df.shape[0], df.loc[df["VisualNonwear"]=="Nonwear"].shape[0]))
 
-
+"""
 rand_sub = random.randint(3002, 3044)
 start_time, end_time, fs, duration = \
     ImportEDF.check_file("/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_BF.edf".format(rand_sub),
@@ -516,7 +520,7 @@ x.ecg_fft = x.run_ecg_fft(start=15*250, show_plot=False)
 ecg_cutoff = x.plot_ecg_cumulative_fft(threshold=.9, show_plot=False)
 
 x.accel_fft = x.run_accel_fft(start=15*25, show_plot=False)
-x.plot_accel_cumulative_fft(threshold=.25, axis="X", show_plot=True)
+x.plot_accel_cumulative_fft(threshold=.25, axis="X", show_plot=False)
 x.plot_accel_cumulative_fft(threshold=.25, axis="Y", show_plot=False)
 x.plot_accel_cumulative_fft(threshold=.25, axis="Z", show_plot=False)
 
@@ -580,7 +584,7 @@ check = CheckButtons(rax, ("Nonwear", "Wear", "Unsure"), (False, False, False))
 check.on_clicked(get_value)
 
 plt.show()
-
+"""
 """
 x = Data(3028)
 x.import_ecg()
@@ -639,27 +643,42 @@ class GoldStandardReview:
         self.df_invalid_nonwear = None
         self.df_invalid_wear = None
 
+        self.anova = None
+        self.posthoc = None
+
         self.import_file()
-        self.format_accel_dom_f()
 
     def import_file(self):
 
         self.df = pd.read_csv(self.file)
 
         self.df["Accel_avg"] = (self.df["SD_X"] + self.df["SD_Y"] + self.df["SD_Z"]) / 3
+
+        self.format_accel_dom_f()
+
         self.df_nw = self.df.loc[self.df["VisualNonwear"] == "Nonwear"]
         self.df_valid = self.df.loc[self.df["Valid_ECG"] == "Valid"]
         self.df_invalid_wear = self.df.loc[(self.df["Valid_ECG"] == "Invalid") &
                                            (self.df["VisualNonwear"] == "Wear")]
 
+        self.df["Group"] = self.df["Valid_ECG"] + self.df["VisualNonwear"]
+
     def format_accel_dom_f(self):
         self.df["Accel_dom_f_X"] = [self.df.iloc[i]["Accel_dom_f"][1:-1] for i in range(self.df.shape[0])]
 
         l = [self.df["Accel_dom_f_X"].iloc[i].split(",") for i in range(self.df.shape[0])]
-        df = pd.DataFrame(l, columns=["Accel_dom_f_X", "Accel_dom_f_Y", "Accel_dom_f_Z"], dtype='float')
+
+        for window in l:
+            if len(window) == 3:
+                window.append(None)
+
+        df = pd.DataFrame(l, columns=["Accel_dom_f_X", "Accel_dom_f_Y", "Accel_dom_f_Z", "Accel_dom_f_VM"],
+                          dtype='float')
+
         self.df["Accel_dom_f_X"] = df["Accel_dom_f_X"]
         self.df["Accel_dom_f_Y"] = df["Accel_dom_f_Y"]
         self.df["Accel_dom_f_Z"] = df["Accel_dom_f_Z"]
+        self.df["Accel_dom_f_VM"] = df["Accel_dom_f_VM"]
 
         dead_data = self.df.drop("Accel_dom_f", axis=1)
 
@@ -669,7 +688,7 @@ class GoldStandardReview:
         medianprops = dict(linewidth=1.5)
 
         units_dict = {"ECG_volt_range": "Voltage", "ECG_dom_f": "Hz", "SVM": "Counts", "Accel_avg": "Avg SD (mg)",
-                      "Accel_dom_f_X": "Hz", "Accel_dom_f_Y": "Hz", "Accel_dom_f_Z": "Hz", }
+                      "Accel_dom_f_X": "Hz", "Accel_dom_f_Y": "Hz", "Accel_dom_f_Z": "Hz", "Accel_dom_f_VM": "Hz"}
 
         self.df.loc[self.df["VisualNonwear"] != "Unsure"].boxplot(column=[col_name],
                                                                   by=["Valid_ECG", "VisualNonwear"],
@@ -679,25 +698,74 @@ class GoldStandardReview:
                                                                   figsize=(10, 6))
         plt.ylabel(units_dict[col_name])
 
-    def plot_descriptive_stats(self, data="ECG_volt_range", error_bars="SD"):
+    def perform_anova(self, data, error_bars="SD", plot_type="bar", save_plot_dir=None):
 
-        tally = self.df.iloc[:, 2:].groupby(["VisualNonwear"]).count().transpose()
-        means = self.df.iloc[:, 2:].groupby(["VisualNonwear"]).mean().transpose()
-        stds = self.df.iloc[:, 2:].groupby(["VisualNonwear"]).std().transpose()
+        # Runs one-way ANOVA ------------------------------------------------------------------------------------------
+
+        df = self.df
+        self.anova = pg.anova(data=df, dv=data, between="Group", detailed=True)
+        print("\nOne-way ANOVA results:")
+        print(self.anova)
+
+        validwear = df.groupby("Group").get_group("ValidWear")[data]
+        invalidwear = df.groupby("Group").get_group("InvalidWear")[data]
+        nonwear = df.groupby("Group").get_group("InvalidNonwear")[data]
+
+        print("\nUnpaired T-Test results:")
+        pair1 = pg.ttest(validwear, invalidwear, paired=False)[["T", "dof", "p-val", "CI95%", "cohen-d", "power"]]
+        pair2 = pg.ttest(validwear, nonwear, paired=False)[["T", "dof", "p-val", "CI95%", "cohen-d", "power"]]
+        pair3 = pg.ttest(nonwear, invalidwear, paired=False)[["T", "dof", "p-val", "CI95%", "cohen-d", "power"]]
+
+        df_ttest = pair1.append(other=(pair2, pair3))
+        df_ttest.index = ["ValidWear-InvalidWear", "ValidWear-Nonwear", "Nonwear-InvalidWear"]
+        df_ttest.insert(loc=0, column="Variable", value=[data, data, data])
+        print(df_ttest)
+
+        self.posthoc = df_ttest
+
+        # PLOTTING ---------------------------------------------------------------------------------------------------
+
+        tally = df.iloc[:, 2:].groupby(["Group"]).count().transpose()
+        means = df.iloc[:, 2:].groupby(["Group"]).mean().transpose()
+        stds = df.iloc[:, 2:].groupby(["Group"]).std().transpose()
+
+        units_dict = {"ECG_volt_range": "Voltage", "ECG_dom_f": "Hz", "SVM": "Counts", "Accel_avg": "Avg SD (mg)",
+                      "Accel_dom_f_X": "Hz", "Accel_dom_f_Y": "Hz", "Accel_dom_f_Z": "Hz", "Accel_dom_f_VM": "Hz"}
 
         import scipy.stats
+        plt.close("all")
 
-        scipy.stats.t.ppf()
         if error_bars == "SEM":
-            plt.bar(means.columns, means.loc[data], color=["darkgrey", "dodgerblue", "green"],
+            plt.bar(means.columns, means.loc[data], color=["red", "grey", "darkorange", "green"],
                     edgecolor='black',
                     alpha=.7, yerr=stds.loc[data] / np.sqrt(tally.loc[data]), capsize=4)
 
         if error_bars == "STD" or error_bars == "SD":
-            plt.bar(means.columns, means.loc[data], color=["darkgrey", "dodgerblue", "green"],
+            plt.bar(means.columns, means.loc[data], color=["red", "grey", "darkorange", "green"],
                     edgecolor='black',
                     alpha=.7, yerr=stds.loc[data], capsize=4)
 
+        if "CI" in error_bars or "ci" in error_bars:
+            t_crits = [scipy.stats.t.ppf(q=int(error_bars.split("%")[0])/100, df=i-1) for
+                       i in [tally.loc[data].iloc[j] for j in range(tally.shape[1])]]
 
-# x = GoldStandardReview()
-# x.generate_boxplot("Accel_dom_f_Z")
+            cis = [stds.loc[data].iloc[i] / np.sqrt(tally.loc[data].iloc[i]) * t_crits[i]
+                   for i in range(tally.shape[1])]
+
+            if plot_type == "bar":
+                plt.bar(means.columns, means.loc[data], color=["red", "grey", "darkorange", "green"],
+                        edgecolor='black',
+                        alpha=.7, yerr=cis, capsize=4)
+
+        plt.title("{} data (mean ± {})".format(data, error_bars))
+        plt.ylabel(units_dict[data])
+        plt.xlabel("Data Description")
+
+        if save_plot_dir is not None:
+            plt.savefig(save_plot_dir + "ANOVA_Output_{}.png".format(data))
+
+
+# d = GoldStandardReview()
+# d.generate_boxplot("ECG_volt_range")
+# d.perform_anova(data="Accel_dom_f_X", error_bars="95%CI", save_plot_dir="/Users/kyleweber/Desktop/")
+
