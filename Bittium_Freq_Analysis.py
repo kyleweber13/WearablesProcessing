@@ -640,7 +640,6 @@ class GoldStandardReview:
         self.df = None
         self.df_nw = None
         self.df_valid = None
-        self.df_invalid_nonwear = None
         self.df_invalid_wear = None
 
         self.anova = None
@@ -655,6 +654,7 @@ class GoldStandardReview:
         self.df["Accel_avg"] = (self.df["SD_X"] + self.df["SD_Y"] + self.df["SD_Z"]) / 3
 
         self.format_accel_dom_f()
+        self.format_ecg_power()
 
         self.df_nw = self.df.loc[self.df["VisualNonwear"] == "Nonwear"]
         self.df_valid = self.df.loc[self.df["Valid_ECG"] == "Valid"]
@@ -664,6 +664,8 @@ class GoldStandardReview:
         self.df["Group"] = self.df["Valid_ECG"] + self.df["VisualNonwear"]
 
     def format_accel_dom_f(self):
+        """Converts strings to list of floats."""
+
         self.df["Accel_dom_f_X"] = [self.df.iloc[i]["Accel_dom_f"][1:-1] for i in range(self.df.shape[0])]
 
         l = [self.df["Accel_dom_f_X"].iloc[i].split(",") for i in range(self.df.shape[0])]
@@ -682,7 +684,18 @@ class GoldStandardReview:
 
         dead_data = self.df.drop("Accel_dom_f", axis=1)
 
-    def generate_boxplot(self, col_name="ECG_volt_range"):
+    def format_ecg_power(self):
+        """Converts strings to list of floats."""
+
+        data = []
+        for row in range(self.df.shape[0]):
+            l = [float(i) for i in list(self.df.iloc[row]["ECG_power"][1:-1].split(","))]
+
+            data.append(l)
+
+        self.df["ECG_power"] = data
+
+    def generate_boxplot(self, col_name):
 
         boxprops = dict(linewidth=1.5)
         medianprops = dict(linewidth=1.5)
@@ -698,7 +711,7 @@ class GoldStandardReview:
                                                                   figsize=(10, 6))
         plt.ylabel(units_dict[col_name])
 
-    def perform_anova(self, data, error_bars="SD", plot_type="bar", save_plot_dir=None):
+    def perform_anova(self, data, error_bars="SD", plot_type="bar", save_dir=None):
 
         # Runs one-way ANOVA ------------------------------------------------------------------------------------------
 
@@ -761,11 +774,25 @@ class GoldStandardReview:
         plt.ylabel(units_dict[data])
         plt.xlabel("Data Description")
 
-        if save_plot_dir is not None:
-            plt.savefig(save_plot_dir + "ANOVA_Output_{}.png".format(data))
+        if save_dir is not None:
+            plt.savefig(save_dir + "ANOVA_Output_{}.png".format(data))
+            self.anova.to_excel(save_dir + "ANOVA_{}.xlsx".format(data), index=False)
+            self.posthoc.to_excel(save_dir + "Posthoc_{}.xlsx".format(data))
+
+    def recalculate_nonwear(self, volt_thresh, ecg_dom_f_thresh, accel_dom_f_thresh, accel_sd_thresh=3):
+        pass
 
 
-# d = GoldStandardReview()
-# d.generate_boxplot("ECG_volt_range")
-# d.perform_anova(data="Accel_dom_f_X", error_bars="95%CI", save_plot_dir="/Users/kyleweber/Desktop/")
+d = GoldStandardReview()
+# d.generate_boxplot("Accel_avg")
+# d.perform_anova(data="SVM", error_bars="95%CI", save_dir="/Users/kyleweber/Desktop/")
+x = pd.DataFrame([i for i in d.df["ECG_power"]], columns=["{}%".format(p) for p in np.arange(10, 110, 10)])
+x["VisualNonwear"] = d.df["VisualNonwear"]
+x["Valid_ECG"] = d.df["Valid_ECG"]
+
+x.loc[x["VisualNonwear"] != "Unsure"].boxplot(column=["50%"],
+                                                          by=["Valid_ECG", "VisualNonwear"],
+                                                          grid=False,
+                                                          showfliers=False, showmeans=False,
+                                                          figsize=(10, 6))
 
