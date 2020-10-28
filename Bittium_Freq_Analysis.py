@@ -16,6 +16,7 @@ import ImportEDF
 from matplotlib.widgets import CheckButtons
 import scipy.stats as stats
 import pingouin as pg
+import sklearn.metrics
 
 
 class Data:
@@ -49,7 +50,8 @@ class Data:
         self.ecg = ECG(subject_id=self.subj_id, filepath=self.filepath,
                        output_dir=None, processed_folder=None,
                        processed_file=None,
-                       age=0, start_offset=self.start_index, end_offset=self.end_index,
+                       age=0, start_offset=self.start_index if self.start_index is not None else 0,
+                       end_offset=self.end_index if self.end_index is not None else 0,
                        rest_hr_window=60, n_epochs_rest=10,
                        epoch_len=15, load_accel=True,
                        filter_data=False, low_f=1, high_f=30, f_type="bandpass",
@@ -81,10 +83,11 @@ class Data:
         if write_dict:
             self.append_parameters_dict("/Users/kyleweber/Desktop/ECG Non-Wear/ECG_Nonwear_Parameters.csv")
 
-    def run_ecg_fft(self, start=None, show_plot=True):
+    def run_ecg_fft(self, start=None, show_plot=True, print_data=True):
 
-        print("\nPerforming FFT on ECG data starting at index {} using {}-second windows...".format(start,
-                                                                                                    self.seg_length))
+        if print_data:
+            print("\nPerforming FFT on ECG data starting at index {} "
+                  "using {}-second windows...".format(start, self.seg_length))
 
         if start is None:
             start = random.randint(0, len(self.ecg.raw) - self.seg_length * self.ecg.sample_rate)
@@ -143,14 +146,16 @@ class Data:
 
         return df_raw_fft
 
-    def run_accel_fft(self, start=None, show_plot=True):
+    def run_accel_fft(self, start=None, show_plot=True, print_data=True):
 
         if start is not None:
-            print("\nPerforming FFT on accelerometer data from index {} using "
-                  "{}-second epochs...".format(start, self.seg_length))
+            if print_data:
+                print("\nPerforming FFT on accelerometer data from index {} using "
+                      "{}-second epochs...".format(start, self.seg_length))
         if start is None:
-            print("\nPerforming FFT on accelerometer data from random segment using "
-                  "{}-second epochs...".format(self.seg_length))
+            if print_data:
+                print("\nPerforming FFT on accelerometer data from random segment using "
+                      "{}-second epochs...".format(self.seg_length))
 
         if start is None:
             start = random.randint(0, len(self.ecg.accel_x) - self.seg_length * self.ecg.accel_sample_rate)
@@ -443,6 +448,98 @@ class Data:
 
         return final_nw
 
+    def calculate_nonwear2(self, volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=0.5, accel_sd_thresh=25,
+                           n_conditions=3, plot_data=True):
+        """volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=0.5, accel_sd_thresh=25, n_conditions=3"""
+
+        print("\nPerforming non-wear detection algorithm...")
+
+        nonwear_status = []
+
+        # Loops through epochs
+        for epoch in np.arange(0, len(self.ecg.epoch_validity)):
+
+            # Condition check booleans
+            volt_nonwear = False
+            ecg_f_nonwear = False
+            accel_f_nonwear = False
+            accel_sd_nonwear = False
+
+            # Calculates corresponding accelerometer data indexes
+            accel_epoch_len = int(self.ecg.sample_rate / self.ecg.accel_sample_rate)
+            raw_accel_ind = int(epoch * accel_epoch_len * self.ecg.accel_sample_rate)
+
+            # Sets epoch as wear if ECG signal was valid
+            if self.ecg.epoch_validity[epoch] == "Valid":
+                nonwear_status.append("Wear")
+
+            # Runs additional analyses if ECG signal is invalid =======================================================
+            if self.ecg.epoch_validity[epoch] == "Invalid":
+
+                # Calculates average axes SD if invalid ECG period ----------------------------------------------------
+                sd_x = np.std(self.ecg.accel_x[raw_accel_ind:raw_accel_ind + accel_epoch_len])
+                sd_y = np.std(self.ecg.accel_y[raw_accel_ind:raw_accel_ind + accel_epoch_len])
+                sd_z = np.std(self.ecg.accel_z[raw_accel_ind:raw_accel_ind + accel_epoch_len])
+
+                avg = (sd_x + sd_y + sd_z) / 3
+                accel_sd_nonwear = True if avg <= accel_sd_thresh else False
+
+                # Calculates dominant frequency in accel signal -------------------------------------------------------
+                accel_fft = self.run_accel_fft(start=raw_accel_ind, show_plot=False)
+                dom_f_x = accel_fft.loc[accel_fft["Power_X"] == max(accel_fft["Power_X"])]["Frequency"].iloc[0]
+
+                accel_f_nonwear = True if dom_f_x >= accel_dom_f_thresh else False
+
+                # Calculates dominant frequency in ECG signal ---------------------------------------------------------
+                ecg_fft = self.run_ecg_fft(start=int(epoch * self.ecg.sample_rate), show_plot=False)
+                dom_f_ecg = ecg_fft.loc[ecg_fft["Power"] == max(ecg_fft["Power"])]["Frequency"].iloc[0]
+
+                ecg_f_nonwear = True if dom_f_ecg >= ecg_dom_f_thresh else False
+
+                # Checks ECG voltage range ----------------------------------------------------------------------------
+                volt_nonwear = True if self.ecg.avg_voltage[epoch] <= volt_thresh else False
+
+                # Rule pass tally -------------------------------------------------------------------------------------
+                if volt_nonwear + accel_sd_nonwear + accel_f_nonwear + ecg_f_nonwear >= n_conditions:
+                    nonwear_status.append("Nonwear")
+
+                if volt_nonwear + accel_sd_nonwear + accel_f_nonwear + ecg_f_nonwear < n_conditions:
+                    nonwear_status.append("Wear")
+
+        if plot_data:
+
+            print("Generating plot...")
+
+            fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(10, 7))
+            plt.suptitle(self.ecg.subject_id)
+            ax1.plot(self.ecg.timestamps[::int(5 * self.ecg.sample_rate / 250)],
+                     self.ecg.raw[::int(5 * self.ecg.sample_rate / 250)], color='black')
+            ax1.set_ylabel("ECG Voltage")
+
+            ax2.plot(self.ecg.timestamps[::int(10 * self.ecg.sample_rate / 250)], self.ecg.accel_x, color='dodgerblue')
+            ax2.set_ylabel("Accel VM")
+
+            ax3.plot(self.ecg.epoch_timestamps[0:min([len(self.ecg.epoch_timestamps), len(self.ecg.epoch_validity)])],
+                     self.ecg.epoch_validity[0:min([len(self.ecg.epoch_timestamps), len(self.ecg.epoch_validity)])],
+                     color='black')
+            ax3.fill_between(x=self.ecg.epoch_timestamps[0:min([len(self.ecg.epoch_timestamps), len(nonwear_status)])],
+                             y1="Wear", y2=nonwear_status, color='grey')
+
+            if self.gs_log.shape[0] >= 1:
+                for row in self.gs_log.itertuples():
+                    ax1.fill_between(x=[row.Start, row.Stop],
+                                     y1=min(self.ecg.filtered[::5]), y2=max(self.ecg.filtered[::5]),
+                                     color='red', alpha=.5)
+                    ax2.fill_between(x=[row.Start, row.Stop], y1=min(self.ecg.accel_x), y2=max(self.ecg.accel_x),
+                                     color='red', alpha=.5)
+
+            xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
+
+            ax3.xaxis.set_major_formatter(xfmt)
+            plt.xticks(rotation=45, fontsize=8)
+
+        return nonwear_status
+
     def calculate_freq_cutoffs(self, epoch_len=15):
 
         ecg_cutoffs = []
@@ -504,6 +601,7 @@ class Data:
 
         print("-File contains {} records "
               "({} non-wear periods).".format(df.shape[0], df.loc[df["VisualNonwear"]=="Nonwear"].shape[0]))
+
 
 """
 rand_sub = random.randint(3002, 3044)
@@ -585,12 +683,17 @@ check.on_clicked(get_value)
 
 plt.show()
 """
+
 """
 x = Data(3028)
 x.import_ecg()
 x.import_gold_standard_log()
-x.nonwear = x.calculate_nonwear(epoch_len=15, plot_data=True)
+# x.nonwear = x.calculate_nonwear(plot_data=True)
+x.nonwear = x.calculate_nonwear2(volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=0.5,
+                                 accel_sd_thresh=25, n_conditions=3, plot_data=True)
+"""
 
+"""
 # ECG processing
 x.ecg_fft = x.run_ecg_fft(start=int(1.22e7), show_plot=True) # 3028, nonwear
 x.ecg_fft = x.run_ecg_fft(start=int(14745000), show_plot=True) # 3028, sleep, wear, clean
@@ -603,7 +706,6 @@ x.accel_fft = x.run_accel_fft(start=200000, show_plot=True)  # 3028, wear, awake
 plot_accel_cumulative_fft(x, .25, axis="Z", start=200000)
 
 x.compare_accel_ffts(ind1=1200000, ind2=1474500)  # 1200000 = nonwear; 1474500 = sleep
-
 """
 
 """
@@ -638,6 +740,10 @@ class GoldStandardReview:
         self.file = file
 
         self.df = None
+
+        self.df_ecg_power = None
+        self.df_accel_power = None
+
         self.df_nw = None
         self.df_valid = None
         self.df_invalid_wear = None
@@ -649,12 +755,11 @@ class GoldStandardReview:
 
     def import_file(self):
 
+        print("\nImporting data...")
+
         self.df = pd.read_csv(self.file)
 
         self.df["Accel_avg"] = (self.df["SD_X"] + self.df["SD_Y"] + self.df["SD_Z"]) / 3
-
-        self.format_accel_dom_f()
-        self.format_ecg_power()
 
         self.df_nw = self.df.loc[self.df["VisualNonwear"] == "Nonwear"]
         self.df_valid = self.df.loc[self.df["Valid_ECG"] == "Valid"]
@@ -662,6 +767,9 @@ class GoldStandardReview:
                                            (self.df["VisualNonwear"] == "Wear")]
 
         self.df["Group"] = self.df["Valid_ECG"] + self.df["VisualNonwear"]
+
+        self.format_accel_dom_f()
+        self.format_ecg_power()
 
     def format_accel_dom_f(self):
         """Converts strings to list of floats."""
@@ -682,10 +790,14 @@ class GoldStandardReview:
         self.df["Accel_dom_f_Z"] = df["Accel_dom_f_Z"]
         self.df["Accel_dom_f_VM"] = df["Accel_dom_f_VM"]
 
+        self.df["Accel_dom_f_avg"] = df["Accel_dom_f_X"] + df["Accel_dom_f_Y"] + df["Accel_dom_f_Z"]
+
         dead_data = self.df.drop("Accel_dom_f", axis=1)
 
     def format_ecg_power(self):
-        """Converts strings to list of floats."""
+        """Converts strings to list of floats. Makes new df of power data"""
+
+        print("\nFormatting ECG signal power data...")
 
         data = []
         for row in range(self.df.shape[0]):
@@ -694,6 +806,112 @@ class GoldStandardReview:
             data.append(l)
 
         self.df["ECG_power"] = data
+
+        self.df_ecg_power = pd.DataFrame([i for i in self.df["ECG_power"]],
+                                         columns=["{}%".format(p) for p in np.arange(0, 100, 10)])
+        self.df_ecg_power["VisualNonwear"] = self.df["VisualNonwear"]
+        self.df_ecg_power["Valid_ECG"] = self.df["Valid_ECG"]
+        self.df_ecg_power["Group"] = self.df["Group"]
+
+    def analyze_ecg_power(self, error_range="95%CI"):
+        """Analyzes cumulative ECG frequency power data."""
+
+        print("\nAnalyzing ECG cumulative frequency power data...")
+
+        df = self.df_ecg_power
+
+        validwear = df.groupby("Group").get_group("ValidWear")
+        invalidwear = df.groupby("Group").get_group("InvalidWear")
+        nonwear = df.groupby("Group").get_group("InvalidNonwear")
+
+        nw_desc = nonwear.describe().loc[["mean", "std", "count"]].transpose()
+        nw_desc["95%CI"] = nw_desc["std"] / np.sqrt(nw_desc["count"]) * scipy.stats.t.ppf(.95, nw_desc["count"] - 1)
+
+        wear_desc = validwear.describe().loc[["mean", "std", "count"]].transpose()
+        wear_desc["95%CI"] = wear_desc["std"] / np.sqrt(wear_desc["count"]) * \
+                             scipy.stats.t.ppf(.95, wear_desc["count"] - 1)
+
+        invalidwear_desc = invalidwear.describe().loc[["mean", "std", "count"]].transpose()
+        invalidwear_desc["95%CI"] = invalidwear_desc["std"] / np.sqrt(invalidwear_desc["count"]) * \
+                                    scipy.stats.t.ppf(.95, invalidwear_desc["count"] - 1)
+
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=nw_desc['mean'] - nw_desc[error_range], y2=nw_desc['mean'],
+                         label="Nonwear", color='red', alpha=.25)
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=nw_desc['mean'], y2=nw_desc['mean'] + nw_desc[error_range],
+                         color='red', alpha=.25)
+
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=wear_desc['mean'] - wear_desc[error_range], y2=wear_desc['mean'],
+                         label="Wear", color='green', alpha=.25)
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=wear_desc['mean'], y2=wear_desc['mean'] + wear_desc[error_range], color='green', alpha=.25)
+
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=invalidwear_desc['mean'] - invalidwear_desc[error_range], y2=invalidwear_desc['mean'],
+                         label="Invalid", color='orange', alpha=.25)
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=invalidwear_desc['mean'], y2=invalidwear_desc['mean'] + invalidwear_desc[error_range],
+                         color='orange', alpha=.25)
+
+        plt.legend(loc='upper left')
+        plt.title("Cumulative ECG Frequency Power ({})".format(error_range))
+        plt.xlabel("% of signal power ≤ value")
+        plt.ylabel("Hz")
+        plt.xlim(0, 100)
+        plt.xticks(np.arange(0, 110, 10))
+        plt.yticks(np.arange(0, plt.ylim()[1], 25))
+
+    def analyze_accel_power(self, error_range="95%CI"):
+        """Analyzes cumulative Accelerometer frequency power data."""
+
+        print("\nAnalyzing Accelerometer cumulative frequency power data...")
+
+        df = self.df_accel_power
+
+        validwear = df.groupby("Group").get_group("ValidWear")
+        invalidwear = df.groupby("Group").get_group("InvalidWear")
+        nonwear = df.groupby("Group").get_group("InvalidNonwear")
+
+        nw_desc = nonwear.describe().loc[["mean", "std", "count"]].transpose()
+        nw_desc["95%CI"] = nw_desc["std"] / np.sqrt(nw_desc["count"]) * scipy.stats.t.ppf(.95, nw_desc["count"] - 1)
+
+        wear_desc = validwear.describe().loc[["mean", "std", "count"]].transpose()
+        wear_desc["95%CI"] = wear_desc["std"] / np.sqrt(wear_desc["count"]) * \
+                             scipy.stats.t.ppf(.95, wear_desc["count"] - 1)
+
+        invalidwear_desc = invalidwear.describe().loc[["mean", "std", "count"]].transpose()
+        invalidwear_desc["95%CI"] = invalidwear_desc["std"] / np.sqrt(invalidwear_desc["count"]) * \
+                                    scipy.stats.t.ppf(.95, invalidwear_desc["count"] - 1)
+
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=nw_desc['mean'] - nw_desc[error_range], y2=nw_desc['mean'],
+                         label="Nonwear", color='red', alpha=.25)
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=nw_desc['mean'], y2=nw_desc['mean'] + nw_desc[error_range],
+                         color='red', alpha=.25)
+
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=wear_desc['mean'] - wear_desc[error_range], y2=wear_desc['mean'],
+                         label="Wear", color='green', alpha=.25)
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=wear_desc['mean'], y2=wear_desc['mean'] + wear_desc[error_range], color='green', alpha=.25)
+
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=invalidwear_desc['mean'] - invalidwear_desc[error_range], y2=invalidwear_desc['mean'],
+                         label="Invalid", color='orange', alpha=.25)
+        plt.fill_between(x=np.arange(0, 100, 10),
+                         y1=invalidwear_desc['mean'], y2=invalidwear_desc['mean'] + invalidwear_desc[error_range],
+                         color='orange', alpha=.25)
+
+        plt.legend(loc='upper left')
+        plt.title("Cumulative ECG Frequency Power ({})".format(error_range))
+        plt.xlabel("% of signal power ≤ value")
+        plt.ylabel("Hz")
+        plt.xlim(0, 100)
+        plt.xticks(np.arange(0, 110, 10))
+        plt.yticks(np.arange(0, plt.ylim()[1], 25))
 
     def generate_boxplot(self, col_name):
 
@@ -718,7 +936,7 @@ class GoldStandardReview:
         df = self.df
         self.anova = pg.anova(data=df, dv=data, between="Group", detailed=True)
         print("\nOne-way ANOVA results:")
-        print(self.anova)
+        print(self.anova.round(3)[["Source", "F", "p-unc"]])
 
         validwear = df.groupby("Group").get_group("ValidWear")[data]
         invalidwear = df.groupby("Group").get_group("InvalidWear")[data]
@@ -732,7 +950,7 @@ class GoldStandardReview:
         df_ttest = pair1.append(other=(pair2, pair3))
         df_ttest.index = ["ValidWear-InvalidWear", "ValidWear-Nonwear", "Nonwear-InvalidWear"]
         df_ttest.insert(loc=0, column="Variable", value=[data, data, data])
-        print(df_ttest)
+        print(df_ttest.round(3)[["T", "p-val", "cohen-d"]])
 
         self.posthoc = df_ttest
 
@@ -743,7 +961,8 @@ class GoldStandardReview:
         stds = df.iloc[:, 2:].groupby(["Group"]).std().transpose()
 
         units_dict = {"ECG_volt_range": "Voltage", "ECG_dom_f": "Hz", "SVM": "Counts", "Accel_avg": "Avg SD (mg)",
-                      "Accel_dom_f_X": "Hz", "Accel_dom_f_Y": "Hz", "Accel_dom_f_Z": "Hz", "Accel_dom_f_VM": "Hz"}
+                      "Accel_dom_f_X": "Hz", "Accel_dom_f_Y": "Hz", "Accel_dom_f_Z": "Hz",
+                      "Accel_dom_f_VM": "Hz", "Accel_dom_f_avg": "Hz"}
 
         import scipy.stats
         plt.close("all")
@@ -779,20 +998,203 @@ class GoldStandardReview:
             self.anova.to_excel(save_dir + "ANOVA_{}.xlsx".format(data), index=False)
             self.posthoc.to_excel(save_dir + "Posthoc_{}.xlsx".format(data))
 
-    def recalculate_nonwear(self, volt_thresh, ecg_dom_f_thresh, accel_dom_f_thresh, accel_sd_thresh=3):
-        pass
+    def recalculate_nonwear(self, volt_thresh=None, ecg_dom_f_thresh=None, accel_dom_f_thresh=None,
+                            accel_sd_thresh=None, ecg_perc_thresh=None, ecg_f_thresh=None,
+                            n_conditions=None, print_data=True):
+
+        if print_data:
+            print("\nRunning algorithm:")
+            if volt_thresh is not None:
+                print("-Voltage range threshold = {} mV".format(volt_thresh))
+            if ecg_dom_f_thresh is not None:
+                print("-ECG dominant frequency threshold = {} Hz".format(ecg_dom_f_thresh))
+            if ecg_perc_thresh is not None and ecg_f_thresh is not None:
+                print("-ECG cumulative frequency threshold = {}% and {} Hz".format(ecg_perc_thresh, ecg_f_thresh))
+            if accel_sd_thresh is not None:
+                print("-Accelerometer SD threshold = {}".format(accel_sd_thresh))
+            if accel_dom_f_thresh is not None:
+                print("-Accelerometer dominant threshold = {} Hz".format(accel_dom_f_thresh))
+            print("-Requires {} conditions to be classified as nonwear".format(n_conditions))
+
+        var_use_dict = {"ECG_volt_range": True if volt_thresh is not None else False,
+                        "ECG_dom_f": True if ecg_dom_f_thresh is not None else False,
+                        "Accel_dom_f": True if accel_dom_f_thresh is not None else False,
+                        "Accel_avg": True if accel_sd_thresh is not None else False,
+                        "ECG_cf_perc": True if ecg_perc_thresh is not None else False,
+                        "ECG_cf_f": True if ecg_f_thresh is not None else False}
+
+        df = self.df.loc[self.df["Group"] != "InvalidUnsure"]
+        df = df[["Valid_ECG", "VisualNonwear", "Group", "ECG_volt_range", "ECG_dom_f", "Accel_avg", "Accel_dom_f_avg"]]
+
+        if ecg_perc_thresh is not None:
+            df["ECG_cf_f"] = self.df_ecg_power[ecg_perc_thresh]
+        if ecg_perc_thresh is None:
+            df["ECG_cf_f"] = [None for i in range(df.shape[0])]
+
+        outcome = []
+        for tup in df.itertuples():
+
+            var_dict = {"ECG_volt_range": True if volt_thresh is not None else False,
+                        "ECG_dom_f": True if ecg_dom_f_thresh is not None else False,
+                        "Accel_dom_f": True if accel_dom_f_thresh is not None else False,
+                        "Accel_SD": True if accel_sd_thresh is not None else False,
+                        "ECG_cf_perc": True if ecg_perc_thresh is not None else False,
+                        "ECG_cf_f": True if ecg_f_thresh is not None else False}
+
+            if volt_thresh is not None:
+                if tup.ECG_volt_range > volt_thresh:
+                    var_dict["ECG_volt_range"] = False
+
+            if ecg_dom_f_thresh is not None:
+                if tup.ECG_dom_f < ecg_dom_f_thresh:
+                    var_dict["ECG_dom_f"] = False
+
+            if accel_dom_f_thresh is not None:
+                if tup.Accel_dom_f_avg < accel_dom_f_thresh:
+                    var_dict["Accel_dom_f"] = False
+
+            if accel_sd_thresh is not None:
+                if tup.Accel_avg > accel_sd_thresh:
+                    var_dict["Accel_SD"] = False
+
+            if ecg_perc_thresh is not None and ecg_f_thresh is not None:
+                if ecg_f_thresh <= tup.ECG_cf_f:
+                    var_dict["ECG_cf_f"] = False
+
+            # Determines how many conditions indicate non-wear
+            if [i for i in var_dict.values()].count(True) >= n_conditions:
+                outcome.append("Nonwear")
+            if [i for i in var_dict.values()].count(True) < n_conditions:
+                outcome.append("Wear")
+
+        df["Outcome"] = outcome
+
+        sens, spec = self.calculate_algorithm_performance(df=df, print_data=print_data)
+
+        tp = df.loc[(df["VisualNonwear"] == "Wear") & (df["Outcome"] == "Wear")].shape[0]
+        tn = df.loc[(df["VisualNonwear"] == "Nonwear") & (df["Outcome"] == "Nonwear")].shape[0]
+        correct = tp + tn
+        perc_accuracy = round(100 * correct / df.shape[0], 1)
+
+        performance_dict = {"N conditions": n_conditions,
+                            "ECG_volt_range": volt_thresh, "ECG_dom_f": ecg_dom_f_thresh,
+                            "Accel_dom_f_avg": accel_dom_f_thresh, "Accel_avg": accel_sd_thresh,
+                            "ECG_cf_perc": ecg_perc_thresh, "ECG_cf_f": ecg_f_thresh,
+                            "% Accuracy": perc_accuracy,
+                            "Sensitivity": sens, "Specificity": spec,
+                            "AUC": round(sklearn.metrics.roc_auc_score(y_true=[0 if i == "Wear" else 1 for
+                                                                               i in df["VisualNonwear"]],
+                                                                       y_score=[0 if i == "Wear" else 1 for
+                                                                                i in df["Outcome"]]), 3),
+                            "Distance": np.sqrt((1 - sens) ** 2 + (1 - spec) ** 2),
+                            "Youden": round(sens + spec - 1, 1)}
+
+        return performance_dict, df
+
+    @staticmethod
+    def calculate_algorithm_performance(df, print_data=True):
+        """Calculates sensitivity and specificity. A nonwear period is considered a 'positive'."""
+
+        # False positive: algorithm says nonwear; gold standard says wear
+        fp = df.loc[(df["VisualNonwear"] == "Wear") & (df["Outcome"] == "Nonwear")].shape[0]
+
+        # False negative: algorithm says wear; gold standard says nonwear
+        fn = df.loc[(df["VisualNonwear"] == "Nonwear") & (df["Outcome"] == "Wear")].shape[0]
+
+        # True positive: algorithm says nonwear; gold standard says nonwear
+        tp = df.loc[(df["VisualNonwear"] == "Nonwear") & (df["Outcome"] == "Nonwear")].shape[0]
+
+        # True negative: algorithm says wear; gold standard says wear
+        tn = df.loc[(df["VisualNonwear"] == "Wear") & (df["Outcome"] == "Wear")].shape[0]
+
+        sens = round(tp / (tp+fn), 3)
+        spec = round(tn / (tn+fp), 3)
+        youden = round(sens + spec - 1, 3)
+        perc_acc = round(100 * (tp + tn) / df.shape[0], 1)
+
+        if print_data:
+            print("\nAlgorithm performance on gold standard dataset:")
+            print("-Accuracy = {}% \n-Sensitivity = {} "
+                  "\n-Specificity = {} \n-Youden's index = {}".format(perc_acc, sens, spec, youden))
+
+        return sens, spec
+
+    def perform_roc(self, volt_ranges=np.arange(50, 750, 100), ecg_f=np.arange(2.5, 27.5, 2.5),
+                    accel_f=np.arange(0.5, 3.5, .25), accel_sd=np.arange(1, 30, 3), n_conditions=3):
+        """Loops through all combinations of parameters given as arguments.
+           Returns df of best AUC and minimum distance to perfect accuracy.
+        """
+
+        print("\nRunning ROC analysis...Please wait a while...")
+
+        t0 = datetime.now()
+
+        n_combos = len(volt_ranges) * len(ecg_f) * len(accel_f) * len(accel_sd)
+
+        data = []
+        tally = 0
+        percent_markers = np.arange(0, n_combos * 1.1, n_combos/10)
+
+        for v in volt_ranges:
+            for e in ecg_f:
+                for accel in accel_f:
+                    for sd in accel_sd:
+                        tally += 1
+
+                        if tally in percent_markers:
+                            print("{}% done ({} seconds)...".format(int(100*tally/n_combos),
+                                                                    round((datetime.now() - t0).total_seconds(), 1)))
+
+                        perf, results = self.recalculate_nonwear(volt_thresh=v, ecg_dom_f_thresh=e,
+                                                                 accel_dom_f_thresh=accel, accel_sd_thresh=sd,
+                                                                 n_conditions=n_conditions, print_data=False)
+
+                        data.append([i for i in perf.values()])
+
+        df = pd.DataFrame(data, columns=[i for i in perf.keys()])
+
+        best_auc = df.loc[df["AUC"] == max(df["AUC"])]
+        best_dist = df.loc[df["Distance"] == min(df["Distance"])]
+        best_youden = df.loc[df["Youden"] == max(df["Youden"])]
+
+        t1 = datetime.now()
+        print("\n=====================================================================================================")
+        print("TOTAL PROCESSING TIME: {} seconds.".format(round((t1-t0).total_seconds(), 1)))
+        print("-Tested {} combinations.".format(df.shape[0]))
+        print("-Required {}/4 conditions to be met for non-wear.".format(n_conditions))
+        print("    -Best AUC = {}, accuracy = {}%, "
+              "sensitivity = {}, specificity = {}".format(best_auc.iloc[0]["AUC"].round(3),
+                                                          best_auc.iloc[0]["% Accuracy"].round(3),
+                                                          best_auc.iloc[0]["Sensitivity"].round(3),
+                                                          best_auc.iloc[0]["Specificity"].round(3)))
+        print("    -Best distance = {}, accuracy = {}%, "
+              "sensitivity = {}, specificity = {}".format(best_dist.iloc[0]["Distance"].round(3),
+                                                          best_dist.iloc[0]["% Accuracy"].round(3),
+                                                          best_dist.iloc[0]["Sensitivity"].round(3),
+                                                          best_dist.iloc[0]["Specificity"].round(3)))
+        print("    -Best Youden's index = {}, accuracy = {}%, "
+              "sensitivity = {}, specificity = {}".format(best_youden.iloc[0]["Youden"].round(3),
+                                                          best_youden.iloc[0]["% Accuracy"].round(3),
+                                                          best_youden.iloc[0]["Sensitivity"].round(3),
+                                                          best_youden.iloc[0]["Specificity"].round(3)))
+
+        return best_auc, best_dist, best_youden
 
 
 d = GoldStandardReview()
 # d.generate_boxplot("Accel_avg")
 # d.perform_anova(data="SVM", error_bars="95%CI", save_dir="/Users/kyleweber/Desktop/")
-x = pd.DataFrame([i for i in d.df["ECG_power"]], columns=["{}%".format(p) for p in np.arange(10, 110, 10)])
-x["VisualNonwear"] = d.df["VisualNonwear"]
-x["Valid_ECG"] = d.df["Valid_ECG"]
+# d.perform_anova(data="ECG_volt_range", error_bars="95%CI", save_dir=None)
+# d.analyze_ecg_power(error_range="95%CI")
 
-x.loc[x["VisualNonwear"] != "Unsure"].boxplot(column=["50%"],
-                                                          by=["Valid_ECG", "VisualNonwear"],
-                                                          grid=False,
-                                                          showfliers=False, showmeans=False,
-                                                          figsize=(10, 6))
+"""
+# BEST PARAMETERS SO FAR
+perf, results = d.recalculate_nonwear(volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=0.5, accel_sd_thresh=25,
+                                      ecg_perc_thresh=None, ecg_f_thresh=None, n_conditions=3)
 
+perf, results = d.recalculate_nonwear(volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=.5,
+                                      accel_sd_thresh=None, ecg_perc_thresh="80%", ecg_f_thresh=30, n_conditions=2)
+"""
+# auc, dist, youden = d.perform_roc(n_conditions=3)
+
+# Make perform_roc able to pick which variables to use/not use
