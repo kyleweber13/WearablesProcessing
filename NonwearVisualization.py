@@ -1,9 +1,11 @@
 from ImportEDF import *
+import ImportEDF
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import ImportEDF
 import os
+from datetime import datetime
+from datetime import timedelta
 
 
 class Data:
@@ -84,28 +86,6 @@ class Data:
 
     def import_data(self):
         """Imports entire accelerometer and temperature file for wear location specified by 'location'"""
-
-        """if self.study_code == "OND06" or self.study_code == "06":
-            self.accel = GENEActiv(filepath=self.file_folder +
-                                            "OND06_SBH_{}_GNAC_ACCELEROMETER_{}.edf".format(str(self.subj_id),
-                                                                                            self.long_loc),
-                                   load_raw=True, start_offset=0, end_offset=0)
-
-            self.temp = GENEActivTemperature(filepath=self.file_folder +
-                                                      "OND06_SBH_{}_GNAC_TEMPERATURE_{}.edf".format(str(self.subj_id),
-                                                                                                    self.long_loc),
-                                             from_processed=False, start_offset=0, end_offset=0)
-
-        if self.study_code == "OND07" or self.study_code == "07":
-            self.accel = GENEActiv(filepath=self.file_folder +
-                                            "OND07_WTL_{}_02_{}_Accelerometer.edf".format(str(self.subj_id),
-                                                                                            self.long_loc),
-                                   load_raw=True, start_offset=0, end_offset=0)
-
-            self.temp = GENEActivTemperature(filepath=self.file_folder +
-                                                      "OND07_WTL_{}_02_{}_Temperature.edf".format(str(self.subj_id),
-                                                                                                  self.long_loc),
-                                             from_processed=False, start_offset=0, end_offset=0)"""
 
         if os.path.exists(self.filename):
             self.accel = GENEActiv(filepath=self.filename,
@@ -226,10 +206,22 @@ class Data:
         stop_index = int(duration * fs * 60)
 
         # Left ankle -------------------------------------------------------------------------------------------------
-        try:
+        if os.path.exists(self.filename_blank.format("LAnkle")):
             la = GENEActiv(filepath=self.filename_blank.format("LAnkle"),
                            load_raw=True, start_offset=start_index, end_offset=stop_index)
+            la_time = la.timestamps
+            lax = la.x
+            lay = la.y
+            laz = la.z
 
+        if not os.path.exists(self.filename_blank.format("LAnkle")):
+            print("-LAnkle file not found.")
+            la_time = [timestamp + timedelta(seconds=i / fs) for i in range(stop_index)]
+            lax = [0 for i in range(stop_index)]
+            lay = [0 for i in range(stop_index)]
+            laz = [0 for i in range(stop_index)]
+
+        if os.path.exists(self.temp_filename_blank.format("LAnkle")):
             la_temp = GENEActivTemperature(filepath=self.temp_filename_blank.format("LAnkle"),
                                            start_offset=0, end_offset=0)
 
@@ -237,99 +229,111 @@ class Data:
 
             df = df.loc[(df["Time"] >= timestamp) & (df["Time"] <= timestamp + timedelta(minutes=duration))]
 
-            la_time = la.timestamps
-            lax = la.x
-            lay = la.y
-            laz = la.z
             lat = df["Temp"]
             la_temp_time = df["Time"]
 
-        except OSError:
-            print("-LAnkle file not found.")
-            la_time = [start_time + timedelta(seconds=i/fs) for i in range(stop_index)]
-            lax = [0 for i in range(stop_index)]
-            lay = [0 for i in range(stop_index)]
-            laz = [0 for i in range(stop_index)]
-            lat = [0 for i in range(stop_index)]
+        if not os.path.exists(self.temp_filename_blank.format("LAnkle")):
+            print("-LAnkle temperature file not found.")
+            lat = [None for i in range(int(stop_index/300))]
+            la_temp_time = [timestamp + timedelta(seconds=i/300) for i in range(int(stop_index/300))]
 
         # Right ankle -------------------------------------------------------------------------------------------------
-        try:
+        if os.path.exists(self.filename_blank.format("RAnkle")):
             ra = GENEActiv(filepath=self.filename_blank.format("RAnkle"),
                            load_raw=True, start_offset=start_index, end_offset=stop_index)
-
-            ra_temp = GENEActivTemperature(filepath=self.temp_filename_blank.format("RAnkle"),
-                                           start_offset=0, end_offset=0)
-
-            df = pd.DataFrame(list(zip(ra_temp.timestamps, ra_temp.temperature)), columns=["Time", "Temp"])
-            df = df.loc[(df["Time"] >= timestamp) & (df["Time"] <= timestamp + timedelta(minutes=duration))]
-
             ra_time = ra.timestamps
             rax = ra.x
             ray = ra.y
             raz = ra.z
-            rat = df["Temp"]
-            ra_temp_time = df["Time"]
 
-        except OSError:
+        if not os.path.exists(self.filename_blank.format("RAnkle")):
             print("-RAnkle file not found.")
-            ra_time = [start_time + timedelta(seconds=i/fs) for i in range(stop_index)]
+            ra_time = [timestamp + timedelta(seconds=i / fs) for i in range(stop_index)]
             rax = [0 for i in range(stop_index)]
             ray = [0 for i in range(stop_index)]
             raz = [0 for i in range(stop_index)]
-            rat = [0 for i in range(stop_index)]
 
-        # Left wrist --------------------------------------------------------------------------------------------------
-        try:
-            lw = GENEActiv(filepath=self.filename_blank.format("LWrist"),
-                           load_raw=True, start_offset=start_index, end_offset=stop_index)
-
-            lw_temp = GENEActivTemperature(filepath=self.temp_filename_blank.format("LWrist"),
+        if os.path.exists(self.temp_filename_blank.format("RAnkle")):
+            ra_temp = GENEActivTemperature(filepath=self.temp_filename_blank.format("RAnkle"),
                                            start_offset=0, end_offset=0)
 
-            df = pd.DataFrame(list(zip(lw_temp.timestamps, lw_temp.temperature)), columns=["Time", "Temp"])
+            df = pd.DataFrame(list(zip(ra_temp.timestamps, ra_temp.temperature)), columns=["Time", "Temp"])
+
             df = df.loc[(df["Time"] >= timestamp) & (df["Time"] <= timestamp + timedelta(minutes=duration))]
 
+            rat = df["Temp"]
+            ra_temp_time = df["Time"]
+
+        if not os.path.exists(self.temp_filename_blank.format("RAnkle")):
+            print("-RAnkle temperature file not found.")
+            rat = [0 for i in range(int(stop_index / 300))]
+            ra_temp_time = [None for i in range(int(stop_index / 300))]
+
+        # Left wrist --------------------------------------------------------------------------------------------------
+        if os.path.exists(self.filename_blank.format("LWrist")):
+            lw = GENEActiv(filepath=self.filename_blank.format("LWrist"),
+                           load_raw=True, start_offset=start_index, end_offset=stop_index)
             lw_time = lw.timestamps
             lwx = lw.x
             lwy = lw.y
             lwz = lw.z
-            lwt = df["Temp"]
-            lw_temp_time = df['Time']
 
-        except OSError:
+        if not os.path.exists(self.filename_blank.format("LWrist")):
             print("-LWrist file not found.")
-            lw_time = [start_time + timedelta(seconds=i/fs) for i in range(stop_index)]
+            lw_time = [timestamp + timedelta(seconds=i / fs) for i in range(stop_index)]
             lwx = [0 for i in range(stop_index)]
             lwy = [0 for i in range(stop_index)]
             lwz = [0 for i in range(stop_index)]
-            lwt = [0 for i in range(stop_index)]
 
-        # Right wrist -------------------------------------------------------------------------------------------------
-        try:
-            rw = GENEActiv(filepath=self.filename_blank.format("RWrist"),
-                           load_raw=True, start_offset=start_index, end_offset=stop_index)
-
-            rw_temp = GENEActivTemperature(filepath=self.temp_filename_blank.format("RWrist"),
+        if os.path.exists(self.temp_filename_blank.format("LWrist")):
+            lw_temp = GENEActivTemperature(filepath=self.temp_filename_blank.format("LWrist"),
                                            start_offset=0, end_offset=0)
 
-            df = pd.DataFrame(list(zip(rw_temp.timestamps, rw_temp.temperature)), columns=["Time", "Temp"])
+            df = pd.DataFrame(list(zip(lw_temp.timestamps, lw_temp.temperature)), columns=["Time", "Temp"])
+
             df = df.loc[(df["Time"] >= timestamp) & (df["Time"] <= timestamp + timedelta(minutes=duration))]
 
+            lwt = df["Temp"]
+            lw_temp_time = df["Time"]
+
+        if not os.path.exists(self.temp_filename_blank.format("LWrist")):
+            print("-LWrist temperature file not found.")
+            lwt = [0 for i in range(int(stop_index / 300))]
+            lw_temp_time = [None for i in range(int(stop_index / 300))]
+
+        # Right wrist -------------------------------------------------------------------------------------------------
+        if os.path.exists(self.filename_blank.format("RWrist")):
+            rw = GENEActiv(filepath=self.filename_blank.format("RWrist"),
+                           load_raw=True, start_offset=start_index, end_offset=stop_index)
             rw_time = rw.timestamps
             rwx = rw.x
             rwy = rw.y
             rwz = rw.z
-            rwt = df["Temp"]
-            rw_temp_time = df["Time"]
 
-        except OSError:
+        if not os.path.exists(self.filename_blank.format("RWrist")):
             print("-RWrist file not found.")
-            rw_time = [start_time + timedelta(seconds=i/fs) for i in range(stop_index)]
+            rw_time = [timestamp + timedelta(seconds=i / fs) for i in range(stop_index)]
             rwx = [0 for i in range(stop_index)]
             rwy = [0 for i in range(stop_index)]
             rwz = [0 for i in range(stop_index)]
-            rwt = [0 for i in range(stop_index)]
 
+        if os.path.exists(self.temp_filename_blank.format("RWrist")):
+            rw_temp = GENEActivTemperature(filepath=self.temp_filename_blank.format("RWrist"),
+                                           start_offset=0, end_offset=0)
+
+            df = pd.DataFrame(list(zip(rw_temp.timestamps, rw_temp.temperature)), columns=["Time", "Temp"])
+
+            df = df.loc[(df["Time"] >= timestamp) & (df["Time"] <= timestamp + timedelta(minutes=duration))]
+
+            rwt = df["Temp"]
+            rw_temp_time = df["Time"]
+
+        if not os.path.exists(self.temp_filename_blank.format("RWrist")):
+            print("-RWrist temperature file not found.")
+            rwt = [0 for i in range(int(stop_index / 300))]
+            rw_temp_time = [None for i in range(int(stop_index / 300))]
+
+        # Combining data ----------------------------------------------------------------------------------------------
         df = pd.DataFrame(list(zip(la_time, lax, lay, laz,
                                    ra_time, rax, ray, raz,
                                    lw_time, lwx, lwy, lwz,
@@ -346,7 +350,7 @@ class Data:
                                columns=["LA_time", "LA_temp", "RA_time", "RA_temp",
                                         "LW_time", "LW_temp", "RW_time", "RW_temp"])
 
-        print("\nIMPORTED DATA FROM {} to {}.".format(start_time, start_time + timedelta(minutes=duration)))
+        print("\nIMPORTED DATA FROM {} to {}.".format(timestamp, timestamp + timedelta(minutes=duration)))
 
         return df, df_temp
 
@@ -445,10 +449,10 @@ class Data:
         ax5.legend(loc='upper right')
 
 
-x = Data(subj_id=2891, location="LA", file_folder="/Users/kyleweber/Desktop/",
+x = Data(subj_id=2891, location="LA", file_folder="/Users/kyleweber/Desktop/Temp Folder/",
          log_file="/Users/kyleweber/Desktop/ReMiNDDNonWearReformatted_vt_25AUG2020.csv", study_code="OND06")
 # x.import_data()  # Imports one full file
 # x.plot_data()  # Plots one full file with all NW marked
 
-# x.df_all, x.df_all_temp = x.import_all_accels(timestamp=None, duration=120)
+# x.df_all, x.df_all_temp = x.import_all_accels(timestamp=None, duration=60)
 # x.plot_all()
