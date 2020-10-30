@@ -37,7 +37,9 @@ class Data:
 
         self.start_ind = None
 
+        self.df_ecg = None
         self.gs_log = None
+        self.nonwear_stamps = None
 
         self.parameters_dict = {"ID": self.subj_id,
                                 "ECG_Index": 0, "Valid_ECG": 0, "ECG_volt_range": 0, "ECG_dom_f": 0, "ECG_power": 0,
@@ -49,7 +51,7 @@ class Data:
 
         self.ecg = ECG(subject_id=self.subj_id, filepath=self.filepath,
                        output_dir=None, processed_folder=None,
-                       processed_file=None,
+                       processed_file=None, ecg_downsample=2,
                        age=0, start_offset=self.start_index if self.start_index is not None else 0,
                        end_offset=self.end_index if self.end_index is not None else 0,
                        rest_hr_window=60, n_epochs_rest=10,
@@ -83,7 +85,7 @@ class Data:
         if write_dict:
             self.append_parameters_dict("/Users/kyleweber/Desktop/ECG Non-Wear/ECG_Nonwear_Parameters.csv")
 
-    def run_ecg_fft(self, start=None, show_plot=True, print_data=True):
+    def run_ecg_fft(self, start=None, fft_filtered=True, show_plot=True, print_data=True):
 
         if print_data:
             print("\nPerforming FFT on ECG data starting at index {} "
@@ -97,7 +99,9 @@ class Data:
         self.start_ind = start
 
         raw_fft = scipy.fft.fft(self.ecg.raw[start:end])
-        filt_fft = scipy.fft.fft(self.ecg.filtered[start:end])
+
+        if fft_filtered:
+            filt_fft = scipy.fft.fft(self.ecg.filtered[start:end])
 
         xf = np.linspace(0.0, 1.0 / (2.0 * (1 / self.ecg.sample_rate)), (self.seg_length * self.ecg.sample_rate) // 2)
 
@@ -140,8 +144,9 @@ class Data:
 
         df = df_raw_fft.loc[df_raw_fft["Frequency"] >= .05]
         dom_f = round(df.loc[df["Power"] == df["Power"].max()]["Frequency"].values[0], 3)
-        # dom_f = round(df_raw_fft.loc[df_raw_fft["Power"] == df_raw_fft["Power"].max()]["Frequency"].values[0], 3)
-        print("-Dominant frequency = {} Hz".format(dom_f))
+
+        if print_data:
+            print("-Dominant frequency = {} Hz".format(dom_f))
         self.parameters_dict["ECG_dom_f"] = dom_f
 
         return df_raw_fft
@@ -197,7 +202,8 @@ class Data:
                                         df_accel_fft["Power_VM"].max()]["Frequency"].values[0], 3)
 
         self.parameters_dict["Accel_dom_f"] = [dom_fx, dom_fy, dom_fz, dom_fvm]
-        print("-Dominant frequencies: X = {}Hz, Y = {}Hz, Z = {}Hz.".format(dom_fx, dom_fy, dom_fz))
+        if print_data:
+            print("-Dominant frequencies: X = {}Hz, Y = {}Hz, Z = {}Hz.".format(dom_fx, dom_fy, dom_fz))
 
         if show_plot:
             fig, (ax1, ax2) = plt.subplots(2, figsize=(10, 8))
@@ -337,20 +343,35 @@ class Data:
         ax2.set_xlabel("Frequency (Hz)")
         ax2.legend()
 
-    def calculate_nonwear(self, plot_data=True):
+    def calculate_nonwear(self, plot_data=True, volt_thresh=400, accel_sd_thresh=10,
+                          ecg_fft_dict={"Use": False, "Percent": 70, "F": 30},
+                          n_minutes=5, window_percent=80, ignore_gap=10):
 
         def find_nonwear():
+
             # First accel check: SD and range below threshold calculations -------------------------------------------
             print("\nPerforming non-wear detection algorithm...")
 
             accel_nw = []
+            accel_sd_list = []
 
             for i in np.arange(0, len(self.ecg.accel_x), self.ecg.accel_sample_rate * self.seg_length):
+
+                # Calculates SD for each accel axis
                 sd_x = np.std(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * self.seg_length])
                 sd_y = np.std(self.ecg.accel_y[i:i + self.ecg.accel_sample_rate * self.seg_length])
                 sd_z = np.std(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * self.seg_length])
-                axes_below_thresh = int(sd_x <= 3) + int(sd_y <= 3) + int(sd_z <= 3)
 
+                # How many axes below threshold
+                axes_below_thresh = int(sd_x <= accel_sd_thresh) + \
+                                    int(sd_y <= accel_sd_thresh) + \
+                                    int(sd_z <= accel_sd_thresh)
+
+                # Average SD across axes
+                avg_sd = (sd_x + sd_y + sd_z) / 3
+                accel_sd_list.append(round(avg_sd, 2))
+
+                # Calculates accelerometer signal range
                 range_x = max(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * self.seg_length]) - \
                           min(self.ecg.accel_x[i:i + self.ecg.accel_sample_rate * self.seg_length])
                 range_y = max(self.ecg.accel_y[i:i + self.ecg.accel_sample_rate * self.seg_length]) - \
@@ -358,59 +379,166 @@ class Data:
                 range_z = max(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * self.seg_length]) - \
                           min(self.ecg.accel_z[i:i + self.ecg.accel_sample_rate * self.seg_length])
 
+                # How many accel axes below range threshold (50mG)
                 axes_below_range = int(range_x <= 50) + int(range_y <= 50) + int(range_z <= 50)
 
-                if axes_below_range >= 2 or axes_below_thresh >= 2:
+                # if axes_below_range >= 2 or axes_below_thresh >= 2:
+                if axes_below_thresh >= 2 or avg_sd <= accel_sd_thresh:
                     accel_nw.append("Nonwear")
                 else:
                     accel_nw.append("Wear")
 
+            # ECG FFT data --------------------------------------------------------------------------------------------
+            if ecg_fft_dict["Use"] and self.ecg_cutoffs is None:
+
+                cutoff_freqs = []
+                dom_freqs = []
+
+                for epoch in np.arange(0, len(self.ecg.raw), self.seg_length * self.ecg.sample_rate):
+
+                    if self.ecg.epoch_validity[epoch] == "Valid":
+                        cutoff_freqs.append(0)
+
+                    if self.ecg.epoch_validity[epoch] == "Invalid":
+
+                        # Runs FFT
+                        ecg_fft = self.run_ecg_fft(start=int(epoch * self.ecg.sample_rate), fft_filtered=False,
+                                                   show_plot=False, print_data=False)
+
+                        # Finds dominant frequency
+                        dom_f_ecg = ecg_fft.loc[ecg_fft["Power"] == max(ecg_fft["Power"])]["Frequency"].iloc[0]
+                        dom_freqs.append(dom_f_ecg)
+
+                        # Calculates frequency that corresponds to cumulative power at ecg_fft_dict["Percent"]
+                        ecg_fft["Normalized_CumulativePower"] = [i / ecg_fft["Power"].sum() for
+                                                                 i in ecg_fft["Power"].cumsum()]
+
+                        cutoff_f = ecg_fft.loc[ecg_fft["Normalized_CumulativePower"] >=
+                                               ecg_fft_dict["Percent"]/100].iloc[0]["Frequency"]
+                        cutoff_freqs.append(cutoff_f)
+
+            if ecg_fft_dict["Use"] and self.ecg_cutoffs is not None:
+                cutoff_freqs = self.ecg_cutoffs
+
+                """PLACEHOLDER"""
+                dom_freqs = [None for i in range(len(self.ecg.epoch_validity))]
+
+            if not ecg_fft_dict["Use"]:
+                cutoff_freqs = [None for i in range(len(self.ecg.epoch_validity))]
+                dom_freqs = [None for i in range(len(self.ecg.epoch_validity))]
+
             # Combines accelerometer and ECG non-wear characteristics: epoch-by-epoch ---------------------------------
             df_ecg = pd.DataFrame(list(zip(self.ecg.epoch_timestamps, self.ecg.epoch_validity,
-                                           self.ecg.avg_voltage, self.ecg.svm, accel_nw)),
-                                  columns=["Stamp", "Validity", "VoltRange", "SVM", "AccelNW"])
+                                           self.ecg.avg_voltage, cutoff_freqs, dom_freqs,
+                                           self.ecg.svm, accel_sd_list, accel_nw)),
+                                  columns=["Stamp", "Validity", "VoltRange", "CutoffF", "DomF",
+                                           "SVM", "AccelSD", "AccelNW"])
 
+            # Checks data to see if below thresholds
             nw = []
-            for epoch in df_ecg.itertuples():
-                if epoch.Validity == "Invalid" and epoch.AccelNW == "Nonwear" and epoch.VoltRange <= 400:
-                    nw.append("Nonwear")
-                else:
-                    nw.append("Wear")
 
-            # 5-minute windows ----------------------------------------------------------------------------------------
+            for epoch in df_ecg.itertuples():
+
+                if ecg_fft_dict["Use"]:
+                    if epoch.Validity == "Invalid" and epoch.AccelNW == "Nonwear" and epoch.VoltRange <= volt_thresh \
+                            and epoch.CutoffF >= ecg_fft_dict["CutoffF"]:
+                        nw.append("Nonwear")
+                    else:
+                        nw.append("Wear")
+
+                if not ecg_fft_dict["Use"]:
+                    if epoch.Validity == "Invalid" and epoch.AccelNW == "Nonwear" and epoch.VoltRange <= volt_thresh:
+
+                        nw.append("Nonwear")
+                    else:
+                        nw.append("Wear")
+
+            # X-minute windows ----------------------------------------------------------------------------------------
             t0 = datetime.now()
             final_nw = np.zeros(len(nw))
+
+            n_epochs = int(n_minutes * 60 / self.seg_length)
+            n_epochs_thresh = int(n_epochs * window_percent / 100)
+
             for i in range(len(nw)):
 
-                if final_nw[i] == "Wear" or final_nw[i] == "Nonwear":
-                    pass
-
-                if nw[i:i + 20].count("Nonwear") >= 19:
-                    final_nw[i:i + 20] = 1
+                if nw[i:i + n_epochs].count("Nonwear") >= n_epochs_thresh:
+                    final_nw[i:i + n_epochs] = 1
 
                     for j in range(i, len(nw)):
-                        if nw[j] == "Nonwear":
+                        """if nw[j] == "Nonwear":
                             pass
                         if nw[j] == "Wear":
                             stop_ind = j
                             if j > i:
+                                final_nw[i:stop_ind] = 1"""
+                        if "Nonwear" in nw[j:j+int(60/self.seg_length)]:
+                            pass
+                        if "Nonwear" not in nw[j:j+int(60/self.seg_length)]:
+                            stop_ind = j
+                            if j > i:
                                 final_nw[i:stop_ind] = 1
+
 
                 else:
                     final_nw[i] = 0
 
             final_nw = ["Nonwear" if i == 1 else "Wear" for i in final_nw]
+
             t1 = datetime.now()
             print("Algorithm time = {} seconds.".format(round((t1 - t0).total_seconds(), 1)))
 
-            return final_nw
+            return final_nw, df_ecg
 
         if self.nonwear is None:
-            final_nw = find_nonwear()
+            final_nw, df_ecg = find_nonwear()
 
         if self.nonwear is not None:
-            print("Data already exists. Using previous data.")
+            print("\nData already exists. Using previous data.")
             final_nw = self.nonwear
+            df_ecg = self.df_ecg
+
+        # Gets timestamps when device was removed and put back on ----------------------------------------------------
+        on_stamps = []
+        off_stamps = []
+
+        for time, stamp1, stamp2 in zip(self.ecg.epoch_timestamps[1:], final_nw[:], final_nw[1:]):
+            if stamp1 == "Wear" and stamp2 == "Nonwear":
+                off_stamps.append(time)
+            if stamp1 == "Nonwear" and stamp2 == "Wear":
+                on_stamps.append(time)
+
+        df_stamps = pd.DataFrame(list(zip(off_stamps, on_stamps)), columns=["start_time", "end_time"])
+
+        # Combines consecutive nonwear periods that were too close together ------------------------------------------
+        n_gap_epochs = ignore_gap * 60 / self.seg_length
+
+        d = pd.DataFrame(list(zip(self.ecg.epoch_timestamps, final_nw)), columns=["Stamp", "Status"])
+
+        # Gets indexes of off/on stamps
+        off_ind = []
+        on_ind = []
+
+        for i in range(df_stamps.shape[0]):
+
+            # Finds data in non-wear period
+            nw = d.loc[(d["Stamp"] >= df_stamps.iloc[i]["start_time"]) &
+                       (d['Stamp'] < df_stamps.iloc[i]["end_time"])]
+
+            off_ind.append(nw.index[0])  # start index
+            on_ind.append(nw.index[-1])  # stop index
+
+        # Adds fake off stamp if only one period was found
+        if len(off_ind) == 1:
+            off_ind.insert(0, 0)
+
+        # Changes data between consecutive periods to nonwear if too close together
+        really_final_nw = np.asarray(final_nw)
+
+        for off, on in zip(off_ind[1:], on_ind[:]):
+
+            if (off - on) <= n_gap_epochs:
+                really_final_nw[on:off] = "Nonwear"
 
         if plot_data:
 
@@ -428,7 +556,7 @@ class Data:
             ax3.plot(self.ecg.epoch_timestamps[0:min([len(self.ecg.epoch_timestamps), len(self.ecg.epoch_validity)])],
                      self.ecg.epoch_validity[0:min([len(self.ecg.epoch_timestamps), len(self.ecg.epoch_validity)])],
                      color='black')
-            ax3.fill_between(x=self.ecg.epoch_timestamps[0:min([len(self.ecg.epoch_timestamps), len(final_nw)])],
+            ax3.fill_between(x=self.ecg.epoch_timestamps[0:min([len(self.ecg.epoch_timestamps), len(really_final_nw)])],
                              y1="Wear", y2=final_nw, color='grey')
 
             if self.gs_log.shape[0] >= 1:
@@ -444,26 +572,19 @@ class Data:
             ax3.xaxis.set_major_formatter(xfmt)
             plt.xticks(rotation=45, fontsize=8)
 
-            # plt.savefig("/Users/kyleweber/Desktop/ECG Non-Wear/{}.png".format(self.ecg.subject_id))
+        return final_nw, df_stamps, df_ecg
 
-        return final_nw
-
-    def calculate_nonwear2(self, volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=0.5, accel_sd_thresh=25,
-                           n_conditions=3, plot_data=True):
-        """volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=0.5, accel_sd_thresh=25, n_conditions=3"""
+    def calculate_nonwear_v2(self, volt_thresh=350, ecg_dom_f_thresh=5, ecg_power_thresh={"Percent": 70, "F": 30},
+                             accel_dom_f_thresh=0.5, accel_sd_thresh=25,
+                             n_conditions=2, plot_data=True, window_len=5, percent_nonwear=80, ignore_gap=10):
 
         print("\nPerforming non-wear detection algorithm...")
+        t0 = datetime.now()
 
         nonwear_status = []
 
         # Loops through epochs
         for epoch in np.arange(0, len(self.ecg.epoch_validity)):
-
-            # Condition check booleans
-            volt_nonwear = False
-            ecg_f_nonwear = False
-            accel_f_nonwear = False
-            accel_sd_nonwear = False
 
             # Calculates corresponding accelerometer data indexes
             accel_epoch_len = int(self.ecg.sample_rate / self.ecg.accel_sample_rate)
@@ -485,30 +606,129 @@ class Data:
                 accel_sd_nonwear = True if avg <= accel_sd_thresh else False
 
                 # Calculates dominant frequency in accel signal -------------------------------------------------------
-                accel_fft = self.run_accel_fft(start=raw_accel_ind, show_plot=False)
-                dom_f_x = accel_fft.loc[accel_fft["Power_X"] == max(accel_fft["Power_X"])]["Frequency"].iloc[0]
+                if accel_dom_f_thresh is not None:
+                    accel_fft = self.run_accel_fft(start=raw_accel_ind, show_plot=False, print_data=False)
+                    dom_f_x = accel_fft.loc[accel_fft["Power_X"] == max(accel_fft["Power_X"])]["Frequency"].iloc[0]
 
-                accel_f_nonwear = True if dom_f_x >= accel_dom_f_thresh else False
+                    accel_f_nonwear = True if dom_f_x >= accel_dom_f_thresh else False
 
-                # Calculates dominant frequency in ECG signal ---------------------------------------------------------
-                ecg_fft = self.run_ecg_fft(start=int(epoch * self.ecg.sample_rate), show_plot=False)
-                dom_f_ecg = ecg_fft.loc[ecg_fft["Power"] == max(ecg_fft["Power"])]["Frequency"].iloc[0]
+                if accel_dom_f_thresh is None:
+                    accel_f_nonwear = False
 
-                ecg_f_nonwear = True if dom_f_ecg >= ecg_dom_f_thresh else False
+                # Calculates dominant frequency in ECG signal --------------------------------------------------------
+                if ecg_dom_f_thresh is not None:
+                    ecg_fft = self.run_ecg_fft(start=int(epoch * self.ecg.sample_rate), fft_filtered=False,
+                                               show_plot=False, print_data=False)
+                    dom_f_ecg = ecg_fft.loc[ecg_fft["Power"] == max(ecg_fft["Power"])]["Frequency"].iloc[0]
+
+                    ecg_f_nonwear = True if dom_f_ecg >= ecg_dom_f_thresh else False
+
+                if ecg_dom_f_thresh is None:
+                    ecg_f_nonwear = False
+
+                # Calculates cumulative frequency power in ECG signal ------------------------------------------------
+                if ecg_power_thresh["F"] is not None and ecg_power_thresh["Percent"] is not None:
+                    ecg_fft = self.run_ecg_fft(start=int(epoch * self.ecg.sample_rate),
+                                               show_plot=False, print_data=False)
+
+                    ecg_fft["Normalized_CumulativePower"] = [i / ecg_fft["Power"].sum() for
+                                                             i in ecg_fft["Power"].cumsum()]
+
+                    cutoff_f = ecg_fft.loc[ecg_fft["Normalized_CumulativePower"] >=
+                                           ecg_power_thresh["Percent"]/100].iloc[0]["Frequency"]
+
+                    ecg_power_nonwear = True if cutoff_f >= ecg_power_thresh["F"] else False
+
+                if ecg_power_thresh["F"] is None and ecg_power_thresh["Percent"] is None:
+                    ecg_power_nonwear = False
 
                 # Checks ECG voltage range ----------------------------------------------------------------------------
                 volt_nonwear = True if self.ecg.avg_voltage[epoch] <= volt_thresh else False
 
                 # Rule pass tally -------------------------------------------------------------------------------------
-                if volt_nonwear + accel_sd_nonwear + accel_f_nonwear + ecg_f_nonwear >= n_conditions:
+                if volt_nonwear + accel_sd_nonwear + accel_f_nonwear + ecg_f_nonwear + ecg_power_nonwear \
+                        >= n_conditions:
                     nonwear_status.append("Nonwear")
 
-                if volt_nonwear + accel_sd_nonwear + accel_f_nonwear + ecg_f_nonwear < n_conditions:
+                if volt_nonwear + accel_sd_nonwear + accel_f_nonwear + ecg_f_nonwear + ecg_power_nonwear \
+                        < n_conditions:
                     nonwear_status.append("Wear")
 
+        # Requiring x-minute windows ----------------------------------------------------------------------------------
+        final_nw = np.zeros(len(nonwear_status))
+        n_epochs = int(window_len * 60 / self.ecg.epoch_len)
+
+        for i in range(len(nonwear_status)):
+
+            if final_nw[i] == "Wear" or final_nw[i] == "Nonwear":
+                pass
+
+            if nonwear_status[i:i + n_epochs].count("Nonwear") >= int(n_epochs * percent_nonwear / 100):
+
+                final_nw[i:i + n_epochs] = 1
+
+                for j in range(i, len(nonwear_status)):
+                    if nonwear_status[j] == "Nonwear":
+                        pass
+                    if nonwear_status[j] == "Wear":
+                        stop_ind = j
+                        if j > i:
+                            final_nw[i:stop_ind] = 1
+
+            else:
+                final_nw[i] = 0
+
+        final_nw = ["Nonwear" if i == 1 else "Wear" for i in final_nw]
+
+        # Calculates on/off timestamps --------------------------------------------------------------------------------
+        on_stamps = []
+        off_stamps = []
+
+        for time, stamp1, stamp2 in zip(self.ecg.epoch_timestamps[1:], final_nw[:], final_nw[1:]):
+            if stamp1 == "Wear" and stamp2 == "Nonwear":
+                off_stamps.append(time)
+            if stamp1 == "Nonwear" and stamp2 == "Wear":
+                on_stamps.append(time)
+
+        df_stamps = pd.DataFrame(list(zip(off_stamps, on_stamps)), columns=["start_time", "end_time"])
+
+        # Removes gaps that are close together ------------------------------------------------------------------------
+        d = pd.DataFrame(list(zip(self.ecg.epoch_timestamps, final_nw)), columns=["Stamp", "Status"])
+
+        n_gap_epochs = ignore_gap * 60 / self.ecg.epoch_len
+        off_ind = []
+        on_ind = []
+
+        # Gets indexes of off/on stamps
+        for i in range(df_stamps.shape[0]):
+
+            # Finds data in non-wear period
+            nw = d.loc[(d["Stamp"] >= df_stamps.iloc[i]["start_time"]) &
+                       (d['Stamp'] < df_stamps.iloc[i]["end_time"])]
+
+            off_ind.append(nw.index[0])  # start index
+            on_ind.append(nw.index[-1])  # stop index
+
+        # Adds fake off stamp if only one period was found
+        if len(off_ind) == 1:
+            off_ind.insert(0, 0)
+
+        # Changes data between consecutive periods to nonwear if too close together
+        really_final_nw = np.asarray(final_nw)
+
+        for off, on in zip(off_ind[1:], on_ind[:]):
+
+            if (off - on) <= n_gap_epochs:
+                really_final_nw[on:off] = "Nonwear"
+
+        t1 = datetime.now()
+
+        print("-Complete ({} seconds).".format(round((t1-t0).total_seconds()), 1))
+
+        # PLOTTING ----------------------------------------------------------------------------------------------------
         if plot_data:
 
-            print("Generating plot...")
+            print("\nGenerating plot...")
 
             fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(10, 7))
             plt.suptitle(self.ecg.subject_id)
@@ -516,14 +736,15 @@ class Data:
                      self.ecg.raw[::int(5 * self.ecg.sample_rate / 250)], color='black')
             ax1.set_ylabel("ECG Voltage")
 
-            ax2.plot(self.ecg.timestamps[::int(10 * self.ecg.sample_rate / 250)], self.ecg.accel_x, color='dodgerblue')
+            ax2.plot(self.ecg.timestamps[::int(self.ecg.sample_rate/self.ecg.accel_sample_rate)],
+                     self.ecg.accel_x, color='dodgerblue')
             ax2.set_ylabel("Accel VM")
 
             ax3.plot(self.ecg.epoch_timestamps[0:min([len(self.ecg.epoch_timestamps), len(self.ecg.epoch_validity)])],
                      self.ecg.epoch_validity[0:min([len(self.ecg.epoch_timestamps), len(self.ecg.epoch_validity)])],
                      color='black')
-            ax3.fill_between(x=self.ecg.epoch_timestamps[0:min([len(self.ecg.epoch_timestamps), len(nonwear_status)])],
-                             y1="Wear", y2=nonwear_status, color='grey')
+            ax3.fill_between(x=self.ecg.epoch_timestamps[0:min([len(self.ecg.epoch_timestamps), len(really_final_nw)])],
+                             y1="Wear", y2=really_final_nw, color='grey')
 
             if self.gs_log.shape[0] >= 1:
                 for row in self.gs_log.itertuples():
@@ -533,44 +754,50 @@ class Data:
                     ax2.fill_between(x=[row.Start, row.Stop], y1=min(self.ecg.accel_x), y2=max(self.ecg.accel_x),
                                      color='red', alpha=.5)
 
+            ax1.legend(labels=["Raw ECG", "GS Nonwear"])
+            ax2.legend(labels=["Accel_VM", "GS Nonwear"])
+
             xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
 
             ax3.xaxis.set_major_formatter(xfmt)
             plt.xticks(rotation=45, fontsize=8)
 
-        return nonwear_status
+        return really_final_nw, df_stamps, off_ind, on_ind
 
-    def calculate_freq_cutoffs(self, epoch_len=15):
+    def calculate_freq_cutoffs(self, epoch_len=15, percent=70):
 
+        print("\nCalculating frequency of {}% cumulative FFT power for {}-second epochs...".format(percent, epoch_len))
         ecg_cutoffs = []
 
         t0 = datetime.now()
 
+        percent_markers = [int(i) for i in np.arange(0, len(self.ecg.raw) * 1.1, len(self.ecg.raw)/10)]
+        marker_tally = 0
         # Loops through all data
         for i in np.arange(0, len(self.ecg.raw), epoch_len * self.ecg.sample_rate):
 
-            epoch_ind = int(i / self.ecg.sample_rate / epoch_len)
+            if percent_markers[marker_tally] <= i <= percent_markers[marker_tally + 1]:
+                marker_tally += 1
+
+                print("-{}% done ({} seconds)...".format(int(100 * i / len(self.ecg.raw)),
+                                                         round((datetime.now() - t0).total_seconds(), 1)))
 
             try:
-                if self.nonwear[epoch_ind] == "Wear":
-                    ecg_cutoffs.append(None)
 
-                if self.nonwear[epoch_ind] == "Nonwear":
+                ecg_fft = self.run_ecg_fft(start=i, show_plot=False, print_data=False, fft_filtered=False)
+                ecg_fft["Normalized_CumulativePower"] = [i / ecg_fft["Power"].sum() for
+                                                         i in ecg_fft["Power"].cumsum()]
 
-                    self.ecg_fft = self.run_ecg_fft(start=i, show_plot=False)
-                    self.ecg_fft["Normalized_CumulativePower"] = [i / self.ecg_fft["Power"].sum() for
-                                                                  i in self.ecg_fft["Power"].cumsum()]
+                cutoff_freq = round(ecg_fft.loc[ecg_fft["Normalized_CumulativePower"]
+                                                >= percent / 100].iloc[0].values[0], 1)
 
-                    cutoff_freq = round(self.ecg_fft.loc[self.ecg_fft["Normalized_CumulativePower"]
-                                                         >= .9].iloc[0].values[0], 1)
-
-                    ecg_cutoffs.append(cutoff_freq)
+                ecg_cutoffs.append(cutoff_freq)
 
             except IndexError:
                 ecg_cutoffs.append(None)
 
         t1 = datetime.now()
-        print("Time = ", round((t1 - t0).total_seconds(), 1), " seconds")
+        print("Complete. Time =", round((t1 - t0).total_seconds(), 1), "seconds")
 
         return ecg_cutoffs
 
@@ -603,134 +830,17 @@ class Data:
               "({} non-wear periods).".format(df.shape[0], df.loc[df["VisualNonwear"]=="Nonwear"].shape[0]))
 
 
-"""
-rand_sub = random.randint(3002, 3044)
-start_time, end_time, fs, duration = \
-    ImportEDF.check_file("/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_BF.edf".format(rand_sub),
-                         print_summary=False)
-# rand_start = randint(0, duration * fs - 15 * fs)
-rand_start = randint(0, duration * fs - 45 * fs)
-
-x = Data(subj_id=rand_sub, start_index=rand_start, end_index=45 * fs, seg_length=15)
-x.import_ecg()
-
-x.ecg_fft = x.run_ecg_fft(start=15*250, show_plot=False)
-ecg_cutoff = x.plot_ecg_cumulative_fft(threshold=.9, show_plot=False)
-
-x.accel_fft = x.run_accel_fft(start=15*25, show_plot=False)
-x.plot_accel_cumulative_fft(threshold=.25, axis="X", show_plot=False)
-x.plot_accel_cumulative_fft(threshold=.25, axis="Y", show_plot=False)
-x.plot_accel_cumulative_fft(threshold=.25, axis="Z", show_plot=False)
-
-x.complete_parameter_dict()
-
-
-def get_value(label):
-    if label == "Nonwear":
-        x.parameters_dict["Visual_nonwear"] = "Nonwear"
-        print("Period set as non-wear.")
-    if label == "Wear":
-        x.parameters_dict["Visual_nonwear"] = "Wear"
-        print("Period set as wear.")
-    if label == "Unsure":
-        x.parameters_dict["Visual_nonwear"] = "Unsure"
-        print("Period marked as unsure if non-wear.")
-
-    plt.draw()
-    plt.close("all")
-
-    x.append_parameters_dict("/Users/kyleweber/Desktop/ECG Non-Wear/ECG_Nonwear_Parameters.csv")
-
-
-fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(10, 6), sharex='col')
-plt.suptitle("{}: {}, {}".format(x.subj_id, x.parameters_dict["Valid_ECG"],
-                                 datetime.strftime(datetime.strptime(str(x.ecg.timestamps[0])[:-3],
-                                                                     "%Y-%m-%dT%H:%M:%S.%f"), "%I:%M:%S %p")))
-if x.ecg.epoch_validity[0] == 'Valid':
-    ax1.plot(np.arange(0, len(x.ecg.raw)) / x.ecg.sample_rate, x.ecg.raw, color='green', linestyle='-', label='raw')
-    ax2.plot(np.arange(0, len(x.ecg.filtered)) / x.ecg.sample_rate, x.ecg.filtered, color='green', label='filt')
-if x.ecg.epoch_validity[0] == 'Invalid':
-    ax1.plot(np.arange(0, len(x.ecg.raw)) / x.ecg.sample_rate, x.ecg.raw, color='red', linestyle='-', label='raw')
-    ax2.plot(np.arange(0, len(x.ecg.filtered)) / x.ecg.sample_rate, x.ecg.filtered, color='red', label='filt')
-ax1.legend()
-ax2.legend()
-
-ax1.set_ylabel("Voltage")
-
-y_scale = ax1.get_ylim()
-if y_scale[1] - y_scale[0] <= 1000:
-    ax1.set_ylim(np.mean(x.ecg.raw) - 600, np.mean(x.ecg.raw) + 600)
-
-y_scale = ax2.get_ylim()
-if y_scale[1] - y_scale[0] <= 1000:
-    ax2.set_ylim(np.mean(x.ecg.filtered) - 600, np.mean(x.ecg.filtered) + 600)
-
-ax1.fill_between(x=[15, 30], y1=ax1.get_ylim()[0], y2=ax1.get_ylim()[1], color='grey', alpha=.25)
-ax2.fill_between(x=[15, 30], y1=ax2.get_ylim()[0], y2=ax2.get_ylim()[1], color='grey', alpha=.25)
-
-ax3.plot(np.arange(0, len(x.ecg.accel_vm)) / x.ecg.accel_sample_rate, x.ecg.accel_x, color='dodgerblue', label='x')
-ax3.plot(np.arange(0, len(x.ecg.accel_vm)) / x.ecg.accel_sample_rate, x.ecg.accel_y, color='red', label='y')
-ax3.plot(np.arange(0, len(x.ecg.accel_vm)) / x.ecg.accel_sample_rate, x.ecg.accel_z, color='black', label='z')
-ax3.legend()
-ax3.set_ylabel("mG")
-ax3.set_ylim(-2000, 2000)
-ax3.set_xlabel("Seconds")
-ax3.fill_between(x=[15, 30], y1=-2000, y2=2000, color='grey', alpha=.25)
-
-rax = plt.axes([.9, .5, .1, .15])
-check = CheckButtons(rax, ("Nonwear", "Wear", "Unsure"), (False, False, False))
-check.on_clicked(get_value)
-
-plt.show()
-"""
-
-"""
 x = Data(3028)
 x.import_ecg()
 x.import_gold_standard_log()
-# x.nonwear = x.calculate_nonwear(plot_data=True)
-x.nonwear = x.calculate_nonwear2(volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=0.5,
-                                 accel_sd_thresh=25, n_conditions=3, plot_data=True)
-"""
 
-"""
-# ECG processing
-x.ecg_fft = x.run_ecg_fft(start=int(1.22e7), show_plot=True) # 3028, nonwear
-x.ecg_fft = x.run_ecg_fft(start=int(14745000), show_plot=True) # 3028, sleep, wear, clean
-cumulative_cutoff = x.plot_ecg_cumulative_fft(.9)
+x.nonwear = None
+x.nonwear, x.nonwear_stamps, x.df_ecg = x.calculate_nonwear(plot_data=True, volt_thresh=400, accel_sd_thresh=10,
+                                                            ecg_fft_dict={"Use": True, "Percent": 70, "F": 30},
+                                                            n_minutes=5, window_percent=80, ignore_gap=10)
 
-# Accelerometer processing
-x.accel_fft = x.run_accel_fft(start=1474500, show_plot=True) # 3028, wear, sleep (1474500)
-x.accel_fft = x.run_accel_fft(start=1200000, show_plot=True)  # 3028, nonwear (120000)
-x.accel_fft = x.run_accel_fft(start=200000, show_plot=True)  # 3028, wear, awake (200000)
-plot_accel_cumulative_fft(x, .25, axis="Z", start=200000)
-
-x.compare_accel_ffts(ind1=1200000, ind2=1474500)  # 1200000 = nonwear; 1474500 = sleep
-"""
-
-"""
-fig, (ax1, ax2) = plt.subplots(2, sharex='col')
-ax1.plot(x.ecg.timestamps[::5], x.ecg.raw[::5], color='red')
-ax1.set_ylabel("Voltage")
-ax2.plot(x.ecg.timestamps[::15*250], ecg_cutoffs, color='green')
-ax2.set_ylabel("Cutoff Freq. (90% power)")
-ax2.axhline(y=70, linestyle='dashed', color='black')
-
-df = pd.DataFrame(list(zip(x.ecg.timestamps[::15*250], x.ecg.epoch_validity, ecg_cutoffs, x.nonwear)),
-                  columns=["Timestamp", "Validity", "Cutoff", "Nonwear"])
-
-print(df.groupby("Nonwear").describe()["Cutoff"][["mean", "std"]])
-df_valid = df.groupby("Nonwear").get_group("Wear")["Cutoff"]
-df_invalid = df.groupby("Nonwear").get_group("Nonwear")["Cutoff"]
-
-plt.hist(df_invalid, bins=np.arange(0, 125, 5), edgecolor='black', color='red',
-         weights=np.ones(df_invalid.shape[0]) / df_invalid.shape[0] * 100, alpha=.5, label="Nonwear")
-plt.hist(df_valid, bins=np.arange(0, 125, 5), edgecolor='black', color='green',
-         weights=np.ones(df_valid.shape[0]) / df_valid.shape[0] * 100, alpha=.5, label="Wear")
-plt.legend()
-plt.ylabel("%")
-plt.xlabel("Hz")
-"""
+# Sort of short period/no gap removal
+# Fix errors when ecg_fft_dict["Use"] = True
 
 
 class GoldStandardReview:
@@ -1181,7 +1291,7 @@ class GoldStandardReview:
         return best_auc, best_dist, best_youden
 
 
-d = GoldStandardReview()
+# d = GoldStandardReview()
 # d.generate_boxplot("Accel_avg")
 # d.perform_anova(data="SVM", error_bars="95%CI", save_dir="/Users/kyleweber/Desktop/")
 # d.perform_anova(data="ECG_volt_range", error_bars="95%CI", save_dir=None)
@@ -1191,10 +1301,5 @@ d = GoldStandardReview()
 # BEST PARAMETERS SO FAR
 perf, results = d.recalculate_nonwear(volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=0.5, accel_sd_thresh=25,
                                       ecg_perc_thresh=None, ecg_f_thresh=None, n_conditions=3)
-
-perf, results = d.recalculate_nonwear(volt_thresh=350, ecg_dom_f_thresh=5, accel_dom_f_thresh=.5,
-                                      accel_sd_thresh=None, ecg_perc_thresh="80%", ecg_f_thresh=30, n_conditions=2)
 """
 # auc, dist, youden = d.perform_roc(n_conditions=3)
-
-# Make perform_roc able to pick which variables to use/not use
