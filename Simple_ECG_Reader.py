@@ -23,7 +23,7 @@ import pywt
 
 class ECG:
 
-    def __init__(self, filepath=None,
+    def __init__(self, filepath=None, run_qc_check=True,
                  start_offset=0, end_offset=0,
                  epoch_len=15, load_accel=False,
                  filter_data=False, low_f=1, high_f=30, f_type="bandpass"):
@@ -65,7 +65,7 @@ class ECG:
         self.svm = []
 
         # Raw data
-        self.ecg = ImportEDF.Bittium(filepath=self.filepath, load_accel=False,
+        self.ecg = ImportEDF.Bittium(filepath=self.filepath, load_accel=self.load_accel,
                                      start_offset=self.start_offset, end_offset=self.end_offset,
                                      low_f=self.low_f, high_f=self.high_f, f_type=self.f_type)
 
@@ -83,12 +83,13 @@ class ECG:
         self.wavelet = self.wavelet_transform()[:len(self.timestamps)]
 
         # Performs quality control check on raw data and epochs data
-        self.epoch_validity, self.epoch_hr, self.avg_voltage, self.rr_sd, self.r_peaks = self.check_quality()
+        if run_qc_check:
+            self.epoch_validity, self.epoch_hr, self.avg_voltage, self.rr_sd, self.r_peaks = self.check_quality()
 
-        # List of epoched heart rates but any invalid epoch is marked as None instead of 0 (as is self.epoch_hr)
-        self.valid_hr = [self.epoch_hr[i] if self.epoch_validity[i] == 0 else None for i in range(len(self.epoch_hr))]
+            # List of epoched heart rates but any invalid epoch is marked as None instead of 0 (as is self.epoch_hr)
+            self.valid_hr = [self.epoch_hr[i] if self.epoch_validity[i] == 0 else None for i in range(len(self.epoch_hr))]
 
-        self.quality_report = self.generate_quality_report()
+            self.quality_report = self.generate_quality_report()
 
         self.rolling_avg_hr = None
 
@@ -331,30 +332,30 @@ class ECG:
 
     def plot_all_data(self, downsample_ratio=2):
 
-        xfmt = mdates.DateFormatter("%a, %I:%M %p")
-        locator = mdates.HourLocator(byhour=[0, 12], interval=1)
+        xfmt = mdates.DateFormatter("%Y-%m-%d \n%H:%M:%S")
+        locator = mdates.HourLocator(byhour=[0, 6, 12, 18], interval=1)
 
-        fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col')
+        fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(10, 6))
+        plt.subplots_adjust(bottom=.17)
 
         plt.suptitle("ECG Data ({} Hz)".format(round(self.sample_rate/downsample_ratio, 1)))
 
         ax1.plot(self.timestamps[::downsample_ratio], self.raw[::downsample_ratio],
                  color='red', label="Raw")
         ax1.set_ylabel("Voltage")
-        ax1.legend()
+        ax1.legend(loc='upper right')
 
-        ax2.plot(self.timestamps[::downsample_ratio], self.filtered[::downsample_ratio],
-                 color='black', label='Filtered')
-        ax2.set_ylabel("Voltage")
-        ax2.legend()
+        fs_ratio = int(self.sample_rate / self.accel_sample_rate)
 
-        ax3.plot(self.timestamps[::downsample_ratio], self.wavelet[::downsample_ratio],
-                 color='blue', label='Wavelet')
-        ax3.set_ylabel("Voltage")
-        ax3.legend()
+        ax2.plot(self.timestamps[::fs_ratio], self.accel_x,
+                 color='black', label="X")
+        ax2.plot(self.timestamps[::fs_ratio], self.accel_y,
+                 color='dodgerblue', label="Y")
+        ax2.legend(loc='upper left')
+        ax2.set_ylabel("mG")
 
-        ax3.xaxis.set_major_formatter(xfmt)
-        ax3.xaxis.set_major_locator(locator)
+        ax2.xaxis.set_major_formatter(xfmt)
+        ax2.xaxis.set_major_locator(locator)
         plt.xticks(rotation=45, fontsize=8)
 
     def plot_validity(self, downsample_ratio=2):
@@ -720,13 +721,10 @@ class CheckQuality:
 # --------------------------------------------------------------------------------------------------------------------
 
 # Creates object and does all the processing
-ecg = ECG(filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3028_01_BF.EDF",
-          start_offset=0, end_offset=0, epoch_len=15, load_accel=False,
+ecg = ECG(filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3025_01_BF.EDF",
+          run_qc_check=False,
+          start_offset=0, end_offset=0, epoch_len=15, load_accel=True,
           filter_data=False, low_f=1, high_f=30, f_type="bandpass")
-
-# If you want to re-filter the data without re-loading everything
-ecg.filtered = Filtering.filter_signal(data=ecg.raw, low_f=1, high_f=20,
-                                       filter_order=3, filter_type="bandpass", sample_f=ecg.sample_rate)
 
 """Additional stuff. Highlight + right-click + "execute selection in python console" to run.
 
@@ -742,7 +740,7 @@ ecg.plot_qc_segment(input_index=None, template_data='filtered', plot_steps=False
 ecg.plot_histogram()
 
 # Plots raw, filtered, and wavelet data. Able to set downsample ratio (defaults to 2).
-ecg.plot_all_data(downsample_ratio=1)
+ecg.plot_all_data(downsample_ratio=2)
 
 # Viewing filtered data with quality check output
 ecg.plot_validity(downsample_ratio=3)
