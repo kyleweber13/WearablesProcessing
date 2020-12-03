@@ -16,14 +16,14 @@ register_matplotlib_converters()
 warnings.filterwarnings("ignore")
 
 x = Subject(
-    # What data to load in
     subject_id=3028,
     study_code="OND07",
-    load_ecg=False, load_ankle=True, load_wrist=False,
+
+    load_ecg=True, load_ankle=False, load_wrist=False,
     load_raw_ecg=False, load_bittium_accel=False, load_raw_ankle=False, load_raw_wrist=False,
     from_processed=True,
 
-    crop_file_start=True,  # leave as True unless devices start at wildly different times
+    crop_file_start=False,  # leave as True unless devices start at wildly different times
     crop_file_end=False,  # leave as False unless only want time period with all device data
 
     # Model parameters
@@ -42,7 +42,7 @@ x = Subject(
     demographics_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/Demographics_Data.csv",
 
     # sleeplog_file="/Users/kyleweber/Desktop/Data/STEPS/Sleep_log_data.csv",
-    sleeplog_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/SleepLogs_All.csv",
+    # sleeplog_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/SleepLogs_All.csv",
 
     nonwear_log_file="/Users/kyleweber/Desktop/Data/OND07/Tabular Data/NonwearLog.xlsx",
 
@@ -59,13 +59,13 @@ x = Subject(
 # ================================================== RUNNING METHODS ==================================================
 x.import_demographics()
 x.create_filenames()
-# x.get_edf_filepaths()
-# x.import_epoch_df()
+x.get_edf_filepaths()
+x.import_epoch_df()
 x.crop_files()
 x.create_device_objects()
-# x.get_data_len()
-# x.sleep = SleepData.Sleep(subject_object=x)
-# x.nonwear = Nonwear.NonwearLog(subject_object=x)
+x.get_data_len()
+x.sleep = SleepData.Sleep(subject_object=x)
+x.nonwear = Nonwear.NonwearLog(subject_object=x)
 
 print("\n======================================= ADDITIONAL ANALYSES =========================================")
 

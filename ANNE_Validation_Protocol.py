@@ -269,4 +269,4 @@ acc = Accels(la_filepath="/Users/kyleweber/Desktop/007_Test/007_Test_GENEActiv_L
 acc.import_data()
 
 x = SensorFusion(ecg_class_obj=ecg, accel_class_obj=acc)
-#x.plot_epoched_ankles_hr(ecg_data=ecg.electrode)
+# x.plot_epoched_ankles_hr(ecg_data=ecg.electrode)

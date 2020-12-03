@@ -120,6 +120,7 @@ class SubjectSubset:
 
             self.participant_list = return_list
 
-        self.participant_list = [i for i in set(self.participant_list)]
+        self.participant_list = sorted([i for i in set(self.participant_list)])
+
         print("\nFound {} participants that meet criteria.".format(len(self.participant_list)))
         print(self.participant_list)

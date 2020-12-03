@@ -21,8 +21,6 @@ def crop_start(subject_object):
 
         return start_crop_dict
 
-    print("\nCropping start of files...")
-
     # Booleans for whether data exists or not
     ankle_exists = subject_object.ankle_filepath is not None
     wrist_exists = subject_object.wrist_filepath is not None
@@ -163,8 +161,6 @@ def crop_end(subject_object, start_offset_dictionary):
         end_crop_dict = {"Ankle": 0, "Wrist": 0, "ECG": 0}
 
         return end_crop_dict
-
-    print("Cropping end of files...")
 
     # Booleans for whether data exists or not
     ankle_exists = subject_object.ankle_filepath is not None

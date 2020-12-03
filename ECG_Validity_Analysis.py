@@ -88,7 +88,7 @@ class EcgAnalysis:
     def analyze_subjects(self, plot_means=False):
 
         icon_dict = {"Sedentary": "o", "Light": "^", "Moderate": "s", "Vigorous": "P"}
-        color_dict = {"Sedentary": "green", "Light": "yellow", "Moderate": "orange", "Vigorous": "red"}
+        color_dict = {"Sedentary": "grey", "Light": "green", "Moderate": "orange", "Vigorous": "red"}
         subjs = sorted(set(self.df_intensity["Subject"]))
 
         plt.subplots(1, 2, figsize=(10, 6))
@@ -111,15 +111,18 @@ class EcgAnalysis:
                 plt.subplot(1, 2, 1)
                 plt.scatter(x=str(subj), y=df["Wrist_Invalid"],
                             marker=icon_dict[intensity], edgecolor="black", color=color_dict[intensity])
+                plt.xticks(rotation=45, fontsize=6)
 
-                if subj == subjs[-1]:
-                    plt.legend(labels=["Sedentary", "Light", "Moderate", "Vigorous"])
+                # if subj == subjs[-1]:
+                #    plt.legend(labels=["Sedentary", "Light", "Moderate", "Vigorous"])
 
                 plt.subplot(1, 2, 2)
                 plt.scatter(x=str(subj), y=df["Ankle_Invalid"],
                             marker=icon_dict[intensity], edgecolor='black', color=color_dict[intensity])
-                if subj == subjs[-1]:
-                    plt.legend(labels=["Sedentary", "Light", "Moderate", "Vigorous"])
+                plt.xticks(rotation=45, fontsize=6)
+
+                # if subj == subjs[-1]:
+                #    plt.legend(labels=["Sedentary", "Light", "Moderate", "Vigorous"])
 
         if plot_means:
 
@@ -176,6 +179,6 @@ class EcgAnalysis:
 
 x = EcgAnalysis(counts_filename="/Users/kyleweber/Desktop/Counts ECG Data/All.xlsx",
                 intensity_filename="/Users/kyleweber/Desktop/Intensity ECG Data/All.xlsx")
-x.analyze_data(data_type="intensity", show_plot=True)
+# x.analyze_data(data_type="intensity", show_plot=False)
 # x.analyze_subjects(plot_means=True)
-x.plot_activity_validity("MVPA")
+# x.plot_activity_validity("All Activity")

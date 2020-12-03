@@ -1,33 +1,30 @@
 from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
-import statistics
 import scipy.stats as stats
 from datetime import datetime
-import progressbar
-from matplotlib.ticker import PercentFormatter
-from random import randint
 import matplotlib.dates as mdates
 import scipy.fft
-from scipy.signal import butter, filtfilt
 import random
 from ECG import ECG
-import ImportEDF
-from matplotlib.widgets import CheckButtons
-import scipy.stats as stats
 import pingouin as pg
 import sklearn.metrics
+from csv import DictWriter
 
 
 class Data:
 
-    def __init__(self, subj_id, start_index=None, end_index=None, seg_length=15):
+    def __init__(self, subj_id, start_index=None, end_index=None, seg_length=15, filepath=None):
         self.subj_id = subj_id
         self.start_index = start_index
         self.end_index = end_index
         self.seg_length = seg_length
 
-        self.filepath = "/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_BF.edf".format(subj_id)
+        # self.filepath = "/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_BF.edf".format(subj_id)
+
+        if filepath is not None:
+            self.filepath = filepath
+
         self.ecg = None
         self.nonwear = None
         self.ecg_cutoffs = None
@@ -803,7 +800,7 @@ class Data:
 
     def complete_parameter_dict(self):
 
-        self.parameters_dict["ECG_Index"]  = self.start_index + 15 * self.ecg.sample_rate
+        self.parameters_dict["ECG_Index"] = self.start_index + 15 * self.ecg.sample_rate
         self.parameters_dict["Valid_ECG"] = self.ecg.epoch_validity[0]
         self.parameters_dict["ECG_volt_range"] = self.ecg.avg_voltage[0]
 
@@ -815,8 +812,6 @@ class Data:
         self.parameters_dict["VisualLength"] = int(self.end_index / self.ecg.sample_rate)
 
     def append_parameters_dict(self, data_file):
-
-        from csv import DictWriter
 
         with open(data_file, "a", newline="\n") as write_obj:
             dict_writer = DictWriter(write_obj, fieldnames=self.parameters_dict.keys())
@@ -830,14 +825,14 @@ class Data:
               "({} non-wear periods).".format(df.shape[0], df.loc[df["VisualNonwear"]=="Nonwear"].shape[0]))
 
 
-x = Data(3028)
+"""x = Data(3028)
 x.import_ecg()
 x.import_gold_standard_log()
 
 x.nonwear = None
 x.nonwear, x.nonwear_stamps, x.df_ecg = x.calculate_nonwear(plot_data=True, volt_thresh=400, accel_sd_thresh=10,
                                                             ecg_fft_dict={"Use": True, "Percent": 70, "F": 30},
-                                                            n_minutes=5, window_percent=80, ignore_gap=10)
+                                                            n_minutes=5, window_percent=80, ignore_gap=10)"""
 
 # Sort of short period/no gap removal
 # Fix errors when ecg_fft_dict["Use"] = True

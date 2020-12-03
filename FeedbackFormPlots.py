@@ -73,9 +73,8 @@ def plot_gait_bouts(la_filename=None, ra_filename=None):
     la_filename = pd.read_csv(la_filename)
     ra_filename = pd.read_csv(ra_filename)
 
-    df_lankle = pd.read_csv(la_filename, skiprows=99, sep=",")
-    df_lankle.columns = ["Timestamp", "X", "Y", "Z", "Lux", "Button", "Temperature"]
-    df_rankle = pd.read_csv(ra_filename, skiprows=99, sep=",")
+    df_lankle = pd.read_csv(la_filename, skiprows=99)
+    df_rankle = pd.read_csv(ra_filename, skiprows=99)
     df_rankle.columns = ["Timestamp", "X", "Y", "Z", "Lux", "Button", "Temperature"]
 
     plt.rcParams.update({'font.size': 14, })
@@ -83,11 +82,14 @@ def plot_gait_bouts(la_filename=None, ra_filename=None):
     plt.plot(np.arange(0, 164000-162100)/75, df_rankle["X"].iloc[162100:164000], color='red')
     plt.xlabel("Seconds")
     plt.yticks([])
-    plt.fill_between(x=[0, 6], y1=-8, y2=8, color='orange', alpha=.7)
-    plt.fill_between(x=[9.4, 21.5], y1=-8, y2=8, color='green', alpha=.5)
-    plt.fill_between(x=[6, 9.4], y1=-8, y2=8, color='grey', alpha=.7)
-    plt.fill_between(x=[21.5, 25], y1=-8, y2=8, color='grey', alpha=.7)
+    plt.fill_between(x=[0, 6], y1=-8, y2=8, color='#db8446', alpha=.75)
+    plt.fill_between(x=[9.4, 21.5], y1=-8, y2=8, color='#87db46', alpha=.55)
+    plt.fill_between(x=[6, 9.4], y1=-8, y2=8, color='grey', alpha=.75)
+    plt.fill_between(x=[21.5, 25], y1=-8, y2=8, color='grey', alpha=.75)
 
 
-#plot_gait_bouts(la_filename="/Users/kyleweber/Desktop/Python Scripts/WearablesCourse/Data Files/Lab4_LAnkle.csv",
-#                ra_filename="/Users/kyleweber/Desktop/Python Scripts/WearablesCourse/Data Files/Lab4_RAnkle.csv")
+plot_gait_bouts(la_filename="/Users/kyleweber/Desktop/Python Scripts/WearablesCourse/Data Files/Lab4_LAnkle.csv",
+                ra_filename="/Users/kyleweber/Desktop/Python Scripts/WearablesCourse/Data Files/Lab4_RAnkle.csv")
+
+df_lankle = pd.read_csv("/Users/kyleweber/Desktop/Python Scripts/WearablesCourse/Data Files/Lab4_LAnkle.csv", skiprows=100)
+df_rankle = pd.read_csv("/Users/kyleweber/Desktop/Python Scripts/WearablesCourse/Data Files/Lab4_RAnkle.csv", skiprows=100)

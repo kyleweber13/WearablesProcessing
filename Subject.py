@@ -163,7 +163,7 @@ class Subject:
                 self.wrist_temperature_filename = "OND07_WTL_{}_{}_GA_{}Wrist_Temperature.edf".format(self.subject_id,
                                                                                                       self.session_num,
                                                                                                       use_side)
-                self.wrist_temperature_filepath = self.raw_edf_folder + self.wrist_temp_filename
+                self.wrist_temperature_filepath = self.raw_edf_folder + self.wrist_temperature_filename
 
             if self.load_ankle and self.load_raw_ankle:
                 self.ankle_filename = "OND07_WTL_{}_{}_GA_{}Ankle_Accelerometer.edf".format(self.subject_id,
@@ -593,7 +593,7 @@ class Subject:
                                start_offset=self.offset_dict["ECGStart"], end_offset=self.offset_dict["ECGEnd"],
                                age=self.demographics["Age"],
                                rest_hr_window=self.rest_hr_window, n_epochs_rest=self.n_epochs_rest_hr,
-                               output_dir=self.output_dir, write_results=self.write_results)
+                               output_dir=self.output_dir)
 
         # Objects from Accelerometer script ---------------------------------------------------------------------------
 
@@ -643,7 +643,7 @@ class Subject:
             print("No files were imported.")
             return None
 
-    def create_epoch_df(self):
+    def create_epoch_df(self, write_file=False):
 
         print("\nCreating dataframe of all epoched data...")
 
@@ -742,6 +742,10 @@ class Subject:
                            "Nonwear_Status": pd.Series(nonwear_status)})
 
         print("Complete.")
+
+        if write_file:
+            print("Saved df to .csv")
+            df.to_csv(self.processed_folder + self.proc_filename, index=False)
 
         return df
 

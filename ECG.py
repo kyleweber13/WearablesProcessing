@@ -1,6 +1,6 @@
 import ImportEDF
 
-from ecgdetectors import Detectors
+from ecgdetectors.ecgdetectors import Detectors
 # https://github.com/luishowell/ecg-detectors
 
 from matplotlib import pyplot as plt
@@ -25,7 +25,7 @@ import random
 class ECG:
 
     def __init__(self, subject_id=None, filepath=None, output_dir=None, processed_folder=None,
-                 processed_file=None,
+                 processed_file=None, ecg_downsample=1,
                  age=0, start_offset=0, end_offset=0,
                  rest_hr_window=60, n_epochs_rest=10,
                  epoch_len=15, load_accel=False,
@@ -55,6 +55,7 @@ class ECG:
         -f_type: type of filter; "lowpass", "highpass", "bandpass"
 
         OTHER
+        -ecg_downsample: ratio by which ECG data are downsampled
         -age: participant age in years. Needed for HRmax calculation.
         """
 
@@ -106,6 +107,14 @@ class ECG:
 
             del self.ecg
 
+        if ecg_downsample != 1:
+            print("\n-ECG data will be downsampled by a factor of "
+                  "{} to {}Hz...".format(ecg_downsample, round(self.sample_rate/ecg_downsample, 1)))
+            self.sample_rate = int(self.sample_rate / ecg_downsample)
+            self.timestamps = self.timestamps[::ecg_downsample]
+            self.raw = self.raw[::ecg_downsample]
+            self.filtered = self.filtered[::ecg_downsample]
+
         if self.load_accel:
             self.epoch_accel()
 
@@ -120,7 +129,7 @@ class ECG:
             self.load_processed()
 
         # List of epoched heart rates but any invalid epoch is marked as None instead of 0 (as is self.epoch_hr)
-        self.valid_hr = [self.epoch_hr[i] if self.epoch_validity[i] == 0
+        self.valid_hr = [self.epoch_hr[i] if self.epoch_validity[i] == "Valid"
                          else None for i in range(len(self.epoch_hr))]
 
         self.quality_report = self.generate_quality_report()
@@ -161,13 +170,7 @@ class ECG:
         rr_sd = []  # window's RR SD
         r_peaks = []  # all R peak indexes
 
-        bar = progressbar.ProgressBar(maxval=len(self.raw),
-                                      widgets=[progressbar.Bar('>', '', '|'), ' ',
-                                               progressbar.Percentage()])
-        bar.start()
-
         for start_index in range(0, int(len(self.raw)), self.epoch_len * self.sample_rate):
-            bar.update(start_index + 1)
 
             qc = CheckQuality(ecg_object=self, start_index=start_index, epoch_len=self.epoch_len)
 
@@ -189,8 +192,6 @@ class ECG:
                 validity_list.append("Invalid")
                 epoch_hr.append(0)
                 rr_sd.append(0)
-
-        bar.finish()
 
         t1 = datetime.now()
         proc_time = (t1 - t0).seconds
@@ -505,6 +506,63 @@ class ECG:
 
         return validity_data
 
+    def visual_nonwear_detection(self):
+
+        # Visual inspection for non-wear
+        fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(10, 6))
+        ax1.plot(self.timestamps[::5], self.raw[::5], color='red')
+        ax2.plot(self.timestamps[::10], self.accel_x, color='black')
+        xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
+        ax2.xaxis.set_major_formatter(xfmt)
+        plt.xticks(rotation=45, fontsize=8)
+
+    def run_ecg_fft(self, start=None, seg_length=None, show_plot=True):
+
+        if start is None:
+            start = random.randint(0, len(self.raw) - seg_length * self.sample_rate)
+        if seg_length is None:
+            seg_length = self.epoch_len
+
+        end = start + seg_length * self.sample_rate
+
+        raw_fft = scipy.fft.fft(self.raw[start:end])
+
+        xf = np.linspace(0.0, 1.0 / (2.0 * (1 / self.sample_rate)), (seg_length * self.sample_rate) // 2)
+
+        if show_plot:
+            fig, (ax1, ax2) = plt.subplots(2, figsize=(10, 8))
+            plt.suptitle("Index = {}".format(start))
+            plt.subplots_adjust(hspace=.35)
+
+            ax1.plot(np.arange(0, seg_length * self.sample_rate) / self.sample_rate,
+                     self.raw[start:end],
+                     color='red', label='Raw')
+            ax1.plot(np.arange(0, seg_length * self.sample_rate) / self.sample_rate,
+                     self.filtered[start:end],
+                     color='black', label='Filt')
+            ax1.legend()
+            ax1.set_xlabel("Seconds")
+            ax1.set_ylabel("Voltage")
+
+            ax2.plot(xf, 2.0 / (seg_length * self.sample_rate) / 2 *
+                     np.abs(raw_fft[0:(seg_length * self.sample_rate) // 2]),
+                     color='red', label="Raw")
+            ax2.set_ylabel("Power")
+            ax2.set_xlabel("Frequency (Hz)")
+            ax2.legend()
+
+        df_raw_fft = pd.DataFrame(list(zip(xf,
+                                           2.0 / (seg_length * self.sample_rate) /
+                                           2 * np.abs(raw_fft[0:(seg_length * self.sample_rate) // 2]))),
+                                  columns=["Frequency", "Power"])
+
+        df_raw_fft["Normalized_CumulativePower"] = [i / df_raw_fft["Power"].sum() for
+                                                      i in df_raw_fft["Power"].cumsum()]
+
+        cutoff_freq = round(df_raw_fft.loc[df_raw_fft["Normalized_CumulativePower"] >= .9].iloc[0].values[0], 1)
+
+        return df_raw_fft, cutoff_freq
+
     def calculate_nonwear(self, epoch_len=15, plot_data=True):
 
         def find_nonwear():
@@ -517,6 +575,7 @@ class ECG:
                 sd_x = np.std(self.accel_x[i:i + self.accel_sample_rate * epoch_len])
                 sd_y = np.std(self.accel_y[i:i + self.accel_sample_rate * epoch_len])
                 sd_z = np.std(self.accel_z[i:i + self.accel_sample_rate * epoch_len])
+
                 axes_below_thresh = int(sd_x <= 3) + int(sd_y <= 3) + int(sd_z <= 3)
 
                 range_x = max(self.accel_x[i:i + self.accel_sample_rate * epoch_len]) - \
@@ -541,7 +600,16 @@ class ECG:
             nw = []
             for epoch in df_ecg.itertuples():
                 if epoch.Validity == "Invalid" and epoch.AccelNW == "Nonwear" and epoch.VoltRange <= 400:
-                    nw.append("Nonwear")
+
+                    # Confirms using FFT that it's a non-wear period
+                    # Gets confused with bad ECG signal during sleep sometimes
+                    fft, power_cutoff = self.run_ecg_fft(start=epoch.Index * self.epoch_len * self.sample_rate,
+                                                         seg_length=epoch_len, show_plot=False)
+
+                    if power_cutoff >= 50:
+                        nw.append("Nonwear")
+                    if power_cutoff < 50:
+                        nw.append("Wear")
                 else:
                     nw.append("Wear")
 
@@ -584,7 +652,7 @@ class ECG:
 
             print("Generating plot...")
 
-            manual_log = pd.read_excel("/Users/kyleweber/Desktop/ECG Non-Wear/BittiumFF_Nonwear.xlsx")
+            manual_log = pd.read_excel("/Users/kyleweber/Desktop/ECG Non-Wear/OND07_VisuallyInspectedECG_Nonwear.xlsx")
             manual_log = manual_log.loc[manual_log["ID"] == self.subject_id]
 
             fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(10, 7))
@@ -763,7 +831,10 @@ class CheckQuality:
 
         # Runs peak detection on raw data ----------------------------------------------------------------------------
         # Uses ecgdetectors package -> stationary wavelet transformation + Pan-Tompkins peak detection algorithm
-        self.r_peaks, self.wavelet, self.filt_squared = detectors.swt_detector(unfiltered_ecg=self.filt_data)
+        # self.r_peaks, self.wavelet, self.filt_squared = detectors.swt_detector(unfiltered_ecg=self.filt_data)
+        self.r_peaks = detectors.swt_detector(unfiltered_ecg=self.filt_data)
+
+        self.r_peaks = [i for i in self.r_peaks]
 
         # Checks to see if there are enough potential peaks to correspond to correct HR range ------------------------
         # Requires number of beats in window that corresponds to ~40 bpm to continue
@@ -802,7 +873,6 @@ class CheckQuality:
         # Peak removed if within median_rr/2 samples of start of window
         # Peak removed if within median_rr/2 samples of end of window
         for i, peak in enumerate(self.r_peaks):
-            # if peak < (self.median_rr/2 + 1) or (self.epoch_len*self.fs - peak) < (self.median_rr/2 + 1):
             if peak < (self.median_rr / 2 + 1) or (self.epoch_len * self.fs - peak) < (self.median_rr / 2 + 1):
                 self.removed_peak.append(self.r_peaks.pop(i))
                 self.removal_indexes.append(i)
@@ -987,170 +1057,21 @@ class CheckQuality:
         ax4.set_xlabel("Time (s)")
         ax4.legend()
 
-# qc = CheckQuality(ecg_object=x.ecg, start_index=8887500, template_data="raw")
-# x.ecg.plot_qc_segment(input_index=None, template_data='wavelet')
 
-# Figure out what to do with first beats that get missed
-    # Thought: run peak detection on entire file (separate from quality check), include all peak indexes, and then
-    # remove ones that fall in invalid regions
+# --------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------- Running Code -----------------------------------------------
+# --------------------------------------------------------------------------------------------------------------------
 
 
-"""
-x = ECG(subject_id=3028, filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3028_01_BF.edf",
+"""x = ECG(subject_id=3028, filepath="C:/Users/ksweber/Desktop/OND07_WTL_3028_02_BF.edf",
         output_dir=None, processed_folder=None,
-        processed_file=None,
+        processed_file=None, ecg_downsample=1,
         age=0, start_offset=0, end_offset=0,
-        rest_hr_window=60, n_epochs_rest=10,
-        epoch_len=15, load_accel=True,
+        rest_hr_window=60, n_epochs_rest=30,
+        epoch_len=15, load_accel=False,
         filter_data=False, low_f=1, high_f=30, f_type="bandpass",
-        load_raw=True, from_processed=False)
+        load_raw=True, from_processed=False)"""
 
-fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(10, 6))
-ax1.plot(x.timestamps[::5], x.raw[::5], color='red')
-ax2.plot(x.timestamps[::10], x.accel_x, color='black')
-xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
-ax2.xaxis.set_major_formatter(xfmt)
-plt.xticks(rotation=45, fontsize=8)
+# Non-wear algorithm
+# x.nonwear = x.calculate_nonwear(epoch_len=15, plot_data=True)
 
-x.nonwear = x.calculate_nonwear(epoch_len=15, plot_data=True)
-"""
-
-def run_fft(start=None, seg_length=15, show_plot=True):
-
-    if start is None:
-        start = random.randint(0, len(x.raw) - 15*x.sample_rate)
-
-    end = start + seg_length * x.sample_rate
-
-    raw_fft = scipy.fft.fft(x.raw[start:end])
-    filt_fft = scipy.fft.fft(x.filtered[start:end])
-
-    xf = np.linspace(0.0, 1.0 / (2.0 * (1 / x.sample_rate)), (seg_length * x.sample_rate) // 2)
-
-    if show_plot:
-        fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(10, 8))
-        plt.suptitle("Index = {}".format(start))
-        plt.subplots_adjust(hspace=.35)
-
-        ax1.plot(np.arange(0, seg_length * x.sample_rate) / x.sample_rate, x.raw[start:end],
-                 color='red', label='Raw')
-        ax1.plot(np.arange(0, seg_length * x.sample_rate) / x.sample_rate, x.filtered[start:end],
-                 color='black', label='Filt')
-        ax1.legend()
-        ax1.set_xlabel("Seconds")
-        ax1.set_ylabel("Voltage")
-
-        ax2.plot(xf, 2.0 / (seg_length * x.sample_rate) / 2 * np.abs(raw_fft[0:(seg_length * x.sample_rate) // 2]),
-                 color='red', label="Raw")
-
-        ax2.set_ylabel("Power")
-        ax2.set_xlabel("Frequency (Hz)")
-        ax2.legend()
-
-        ax3.plot(xf, 2.0 / (seg_length * x.sample_rate) / 2 * np.abs(filt_fft[0:(seg_length * x.sample_rate) // 2]),
-                 color='black', label="Filt")
-        ax3.fill_between(x=[x.low_f, x.high_f], y1=plt.ylim()[0], y2=plt.ylim()[1],
-                         color='green', alpha=.5, label="Bandpass")
-        ax3.set_ylabel("Power")
-        ax3.set_xlabel("Frequency (Hz)")
-        ax3.legend()
-
-    df_raw_fft = pd.DataFrame(list(zip(xf,
-                                       2.0 / (seg_length * x.sample_rate) /
-                                       2 * np.abs(raw_fft[0:(seg_length * x.sample_rate) // 2]))),
-                              columns=["Frequency", "Power"])
-
-    dom_f = round(df_raw_fft.loc[df_raw_fft["Power"] == df_raw_fft["Power"].max()]["Frequency"].values[0], 3)
-    print("-Dominant frequency = {} Hz".format(dom_f))
-
-    return df_raw_fft
-
-
-def run_accel_fft(start=None, seg_length=15, show_plot=True):
-    if start is None:
-        start = random.randint(0, len(x.raw) - seg_length*x.accel_sample_rate)
-
-    end = start + seg_length * x.accel_sample_rate
-
-    fft_x = scipy.fft.fft(x.accel_x[start:end])
-    fft_y = scipy.fft.fft(x.accel_y[start:end])
-    fft_z = scipy.fft.fft(x.accel_z[start:end])
-
-    xf = np.linspace(0.0, 1.0 / (2.0 * (1 / x.accel_sample_rate)), (seg_length * x.accel_sample_rate) // 2)
-
-    if show_plot:
-        fig, (ax1, ax2) = plt.subplots(2, figsize=(10, 8))
-        plt.suptitle("Index = {}".format(start))
-        plt.subplots_adjust(hspace=.35)
-
-        ax1.plot(np.arange(0, seg_length * x.accel_sample_rate) / x.accel_sample_rate, x.accel_x[start:end],
-                 color='red', label='X')
-        ax1.plot(np.arange(0, seg_length * x.accel_sample_rate) / x.accel_sample_rate, x.accel_y[start:end],
-                 color='black', label='Y')
-        ax1.plot(np.arange(0, seg_length * x.accel_sample_rate) / x.accel_sample_rate, x.accel_z[start:end],
-                 color='dodgerblue', label='Z')
-        ax1.legend()
-        ax1.set_xlabel("Seconds")
-        ax1.set_ylabel("mG")
-
-        ax2.plot(xf, 2.0 / (seg_length * x.accel_sample_rate) / 2 * np.abs(fft_x[0:(seg_length * x.accel_sample_rate) // 2]),
-                 color='red', label="X")
-
-        ax2.plot(xf, 2.0 / (seg_length * x.accel_sample_rate) / 2 * np.abs(fft_y[0:(seg_length * x.accel_sample_rate) // 2]),
-                 color='black', label="Y")
-
-        ax2.plot(xf, 2.0 / (seg_length * x.accel_sample_rate) / 2 * np.abs(fft_z[0:(seg_length * x.accel_sample_rate) // 2]),
-                 color='dodgerblue', label="Z")
-
-        ax2.set_ylabel("Power")
-        ax2.set_xlabel("Frequency (Hz)")
-        ax2.legend()
-
-    df_accel_fft = pd.DataFrame(list(zip(xf,
-                                         2.0 / (seg_length * x.sample_rate) /
-                                         2 * np.abs(fft_x[0:(seg_length * x.sample_rate) // 2]),
-                                         2.0 / (seg_length * x.sample_rate) /
-                                         2 * np.abs(fft_y[0:(seg_length * x.sample_rate) // 2]),
-                                         2.0 / (seg_length * x.sample_rate) /
-                                         2 * np.abs(fft_z[0:(seg_length * x.sample_rate) // 2]))),
-                                columns=["Frequency", "Power_X", "Power_Y", "Power_Z"])
-
-    df_accel_fft = df_accel_fft.loc[df_accel_fft["Frequency"] >= .05]
-
-    return df_accel_fft
-
-# df_fft = run_fft(start=14745000, seg_length=30, show_plot=True)  # Wear, clean
-# df_fft = run_fft(int(1.22e7), seg_length=30)  # Nonwear
-
-"""
-df_fft["Normalized_CumulativePower"] = [i/df_fft["Power"].sum() for i in df_fft["Power"].cumsum()]
-df_fft.loc[df_fft["Normalized_CumulativePower"] >= 0.90].iloc[0]
-
-fig, (ax1, ax2) = plt.subplots(2)
-ax1.set_title("Clean")
-ax1.plot(df_fft["Frequency"], df_fft["Power"], label="FFT")
-ax1.set_ylabel("Power")
-ax1.legend()
-ax2.plot(df_fft["Frequency"], [i/df_fft["Power"].sum() for i in df_fft["Power"].cumsum()], label='Cumulative power')
-ax2.legend()
-ax2.set_ylabel("Normalized power")
-ax2.set_xlabel("Hz")
-"""
-
-"""
-fig, (ax1, ax2) = plt.subplots(2, sharex='col')
-df_accel_fft = run_accel_fft(1500000, seg_length=30, show_plot=False) #  sleep
-ax1.plot(df_accel_fft["Frequency"], [i / df_accel_fft["Power_Z"].sum() for i in df_accel_fft["Power_Z"].cumsum()],
-         label="Z_Sleep", color='black')
-ax1.fill_between(x=[1/(60/12), 1/(60/20)], y1=0, y2=1, color='green', alpha=.5, label='Sleep breath rate')
-ax1.set_ylabel("Power")
-ax1.legend()
-
-df_accel_fft = run_accel_fft(int(1195000), seg_length=30, show_plot=False)  #  nonwear
-ax2.plot(df_accel_fft["Frequency"], [i / df_accel_fft["Power_Z"].sum() for i in df_accel_fft["Power_Z"].cumsum()],
-         label="Z_Nonwear", color='black')
-ax2.fill_between(x=[1/(60/12), 1/(60/20)], y1=0, y2=1, color='green', alpha=.5, label='Sleep breath rate')
-ax2.set_ylabel("Power")
-ax2.set_xlabel("Frequency (Hz)")
-ax2.legend()
-"""
