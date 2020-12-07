@@ -7,6 +7,8 @@ from datetime import timedelta
 import numpy as np
 import ECG
 import ImportEDF
+from matplotlib.widgets import CheckButtons
+from matplotlib.widgets import Button
 
 
 xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
@@ -471,6 +473,9 @@ def crop_data(bf_file):
 
     bf_index = 0
 
+    if bf_file is None:
+        return 0
+
     bf_start, bf_end, bf_fs, bf_dur = ImportEDF.check_file(filepath=bf_file, print_summary=False)
     chest_start = anne.df_chest["Timestamp"].iloc[0]
     limb_start = anne.df_limb["Timestamp"].iloc[0]
@@ -509,14 +514,14 @@ anne.import_data()
 bittium_offset = crop_data(bf_file=bittium_file)
 
 
-bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
+"""bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
              output_dir=None, processed_folder=None,
              processed_file=None, ecg_downsample=1,
              age=26, start_offset=bittium_offset, end_offset=0,
              rest_hr_window=60, n_epochs_rest=30,
              epoch_len=15, load_accel=True,
              filter_data=False, low_f=1, high_f=30, f_type="bandpass",
-             load_raw=True, from_processed=False)
+             load_raw=True, from_processed=False)"""
 
 
 anne.epoch_hr = anne.epoch_chest_hr(epoch_len=15)
@@ -638,3 +643,126 @@ def plot_hr_and_movement():
 
 # TODO
 # Plot to compare validity
+
+
+class ANNEViewer:
+
+    def __init__(self, anne_obj=None, bf_obj=None):
+
+        self.anne = anne_obj
+        self.bf = bf_obj
+
+        self.anne_ecg_dict = {"hr_bpm": False, "rr_rpm": False, "chesttemp_c": False,
+                              "epoch_hr": False, "ECG": False}
+        self.anne_acc_dict = {"x": False, "y": False, "z": False, "SVM": False}
+        self.anne_limb_dict = {"spO2_perc": False, "pr_bpm": False, "limb_temp": False, "ppg": False}
+
+        self.check1 = None
+        self.check2 = None
+        self.check3 = None
+        self.reload_button = None
+
+    def generate_plot(self):
+
+        plt.close("all")
+        fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(12, 9))
+        plt.subplots_adjust(right=.8, hspace=.28)
+
+        # ANNE CHEST ECG ----------------------------------------------------------------------------------------------
+        ax1.set_title("ANNE Chest ECG")
+
+        if True in self.anne_ecg_dict.values():
+            for key in test.anne_ecg_dict.keys():
+                if test.anne_ecg_dict[key]:
+                    if key == "epoch_hr":
+                        ax1.plot(self.anne.epoch_hr["Timestamp"], self.anne.epoch_hr['hr_bpm'],
+                                 color='red', label="epoch_hr")
+                        ax1.set_ylabel(key)
+
+                    if key == "ECG":
+                        ax1.plot(self.anne.chest_ecg["Timestamp"][::5], self.anne.chest_ecg['ecg'][::5],
+                                 color='red', label="ECG")
+                        ax1.set_ylabel(key)
+
+                    if key in ["rr_rpm", "chesttemp_c", "hr_bpm"]:
+                        ax1.plot(self.anne.df_chest["Timestamp"], self.anne.df_chest[key],
+                                 color='red', label=key)
+                        ax1.set_ylabel(key)
+                ax1.legend(loc='upper right')
+
+        # ANNE CHEST ACC ----------------------------------------------------------------------------------------------
+        ax2.set_title("ANNE Chest Acc")
+
+        if True in self.anne_acc_dict.values():
+            for key in self.anne_acc_dict.keys():
+                if self.anne_acc_dict[key]:
+                    if key == "x":
+                        ax2.plot(self.anne.chest_acc["Timestamp"][::2], self.anne.chest_acc["x"][::2],
+                                 label='x', color='green')
+                    if key == "y":
+                        ax2.plot(self.anne.chest_acc["Timestamp"][::2], self.anne.chest_acc["y"][::2],
+                                 label='y', color='dodgerblue')
+                    if key == "z":
+                        ax2.plot(self.anne.chest_acc["Timestamp"][::16], self.anne.chest_acc["z"][::16],
+                                 label='z', color='black')
+                    if key == "SVM":
+                        ax2.plot(self.anne.epoch_acc["Timestamp"], self.anne.epoch_acc["SVM"],
+                                 color='black', label="SVM")
+
+            ax2.legend(loc='upper right')
+
+        # ANNE LIMB ---------------------------------------------------------------------------------------------------
+        ax3.set_title("ANNE Limb")
+
+        if True in self.anne_limb_dict.values():
+            for key in self.anne_limb_dict.keys():
+                if self.anne_limb_dict[key]:
+                    if key == "ppg":
+                        ax3.plot(self.anne.limb_ppg["Timestamp"][::4], self.anne.limb_ppg["red"][::4],
+                                 color='red', label="Red light")
+                        ax3.plot(self.anne.limb_ppg["Timestamp"][::4], self.anne.limb_ppg["ir"][::4],
+                                 color='black', label='IR')
+                    if key != "ppg":
+                        ax3.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb[key], color='purple', label=key)
+
+            ax3.legend(loc='upper right')
+
+        ax3.xaxis.set_major_formatter(xfmt)
+        plt.xticks(rotation=45, fontsize=8)
+
+        # Check boxes -------------------------------------------------------------------------------------------------
+        rax1 = plt.axes([.81, .661, .18, .22])
+        self.check1 = CheckButtons(rax1, ("hr_bpm", "rr_rpm", "chesttemp_c", "epoch_hr", "ECG"),
+                                   (False, False, False, False, False))
+
+        rax2 = plt.axes([.81, .385, .18, .22])
+        self.check2 = CheckButtons(rax2, ("Acc_x", "Acc_y", "Acc_z", "SVM"), (False, False, False, False))
+
+        rax3 = plt.axes([.81, .11, .18, .2175])
+        self.check3 = CheckButtons(rax3, ("spO2_perc", "pr_bpm", "limb_temp", "ppg"), (False, False, False, False))
+
+        rax_reload = plt.axes([0.85, 0.05, 0.1, .05])
+        self.reload_button = Button(rax_reload, 'Redraw', color='limegreen')
+
+        self.reload_button.on_clicked(self.get_values)
+
+    def get_values(self, event):
+        print("Reloading...")
+
+        ax1_vals = self.check1.get_status()
+        self.anne_ecg_dict.update(zip([i for i in self.anne_ecg_dict.keys()], ax1_vals))
+
+        ax2_vals = self.check2.get_status()
+        self.anne_acc_dict.update(zip([i for i in self.anne_acc_dict.keys()], ax2_vals))
+
+        ax3_vals = self.check3.get_status()
+        self.anne_limb_dict.update(zip([i for i in self.anne_limb_dict.keys()], ax3_vals))
+
+        self.generate_plot()
+
+
+test = ANNEViewer(anne_obj=anne, bf_obj=None)
+
+# Empty plot
+# test.generate_plot()
+
