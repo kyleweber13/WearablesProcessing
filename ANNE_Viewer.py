@@ -9,7 +9,7 @@ import ECG
 import ImportEDF
 from matplotlib.widgets import CheckButtons
 from matplotlib.widgets import Button
-
+from matplotlib.widgets import RadioButtons
 
 xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
 
@@ -198,58 +198,6 @@ class ANNE:
         t1 = datetime.now()
         proc_time = (t1 - t0).total_seconds()
         print("Data import complete ({} seconds)".format(round(proc_time, 1)))
-
-    def plot_outcome_measure(self, outcome_measure):
-
-        units_dict = {"hr_bpm": "BPM", "hr_sqi": "Fraction", "ecg_leadon": "Binary (1 = ON)",
-                      "ecg_valid": "Binary (1 = Yes)", "rr_rpm": "Breaths/min", "apnea_s": "Seconds",
-                      "rr_sqi": "Fraction", "accx_g": "G's", "accy_g": "G's", "accz_g": "G's",
-                      "chesttemp_c": "Degrees Celcius", "hr_alarm": "Binary (1 = Yes)", "rr_alarm": "Binary (1 = Yes)",
-                      "spo2_alarm": "Binary (1 = Yes)", "chesttemp_alarm": "Binary (1 = Yes)",
-                      "limbtemp_alarm": "Binary (1 = Yes)", "apnea_alarm": "Binary (1 = Yes)",
-                      "exception": "Binary (1 = Yes)", "chest_off": "Binary (1 = Yes)", "limb_off": "Binary (1 = Yes)"}
-
-        if len(outcome_measure) == 1 or type(outcome_measure) == str:
-            if outcome_measure[0] not in units_dict.keys():
-                print("-Invalid outcome measure ({}). "
-                      "Select from the list below and try again:".format(outcome_measure))
-                print([i for i in self.df_chest.keys()])
-                return None
-
-            fig, ax = plt.subplots(1, figsize=(12, 8))
-            plt.subplots_adjust(bottom=.1)
-            ax.set_title(outcome_measure)
-            ax.plot(self.df_chest["Timestamp"], self.df_chest[outcome_measure], color='black')
-            ax.set_ylabel(units_dict[outcome_measure[0]])
-            ax.xaxis.set_major_formatter(xfmt)
-            plt.xticks(rotation=45, fontsize=8)
-
-        if len(outcome_measure) == 2:
-            if outcome_measure[0] not in units_dict.keys():
-                print("-Invalid outcome measure ({}). "
-                      "Select from the list below and try again:".format(outcome_measure[0]))
-                print([i for i in self.df_chest.keys()])
-                return None
-
-            if outcome_measure[1] not in units_dict.keys():
-                print("-Invalid outcome measure ({}). "
-                      "Select from the list below and try again:".format(outcome_measure[1]))
-                print([i for i in self.df_chest.keys()])
-                return None
-
-            fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(12, 8))
-            plt.subplots_adjust(bottom=.1)
-
-            ax1.set_title(outcome_measure[0])
-            ax1.plot(self.df_chest["Timestamp"], self.df_chest[outcome_measure[0]], color='black')
-            ax1.set_ylabel(units_dict[outcome_measure[0]])
-
-            ax2.set_title(outcome_measure[1])
-            ax2.plot(self.df_chest["Timestamp"], self.df_chest[outcome_measure[1]], color='dodgerblue')
-            ax2.set_ylabel(units_dict[outcome_measure[1]])
-
-            ax2.xaxis.set_major_formatter(xfmt)
-            plt.xticks(rotation=45, fontsize=8)
 
     def filter_ecg_data(self, filter_type="bandpass", low_f=0.67, high_f=30):
 
@@ -514,21 +462,18 @@ anne.import_data()
 bittium_offset = crop_data(bf_file=bittium_file)
 
 
-"""bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
+bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
              output_dir=None, processed_folder=None,
              processed_file=None, ecg_downsample=1,
              age=26, start_offset=bittium_offset, end_offset=0,
              rest_hr_window=60, n_epochs_rest=30,
              epoch_len=15, load_accel=True,
              filter_data=False, low_f=1, high_f=30, f_type="bandpass",
-             load_raw=True, from_processed=False)"""
+             load_raw=True, from_processed=False)
 
 
 anne.epoch_hr = anne.epoch_chest_hr(epoch_len=15)
 anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
-
-# Able to plot one or two variables
-# anne.plot_outcome_measure(['hr_bpm'])
 
 # Filters ecg data
 # anne.filter_ecg_data(filter_type='bandpass', low_f=.67, high_f=25)
@@ -540,92 +485,38 @@ anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
 # anne.filter_acc_data(filter_type='bandpass', low_f=0.05, high_f=10)
 
 # Plots accel data. Able to plot just raw or raw and filtered. Able to adjust sample rate.
-# anne.plot_acc(sample_rate=25, show_filtered=False)
-
-"""
-
-# ECG
-fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(12, 7))
-ax1.plot(anne.chest_ecg["Timestamp"][::5], anne.chest_ecg['ecg'][::5], color='red')
-ax1.set_title("ANNE Chest ECG")
-ax2.plot(anne.df_limb["Timestamp"], anne.df_limb["spO2_perc"], color='dodgerblue')
-ax2.set_title("ANNE Limb SPO2")
-ax3.plot(bf.timestamps[::3], bf.raw[::3], color='black')
-ax3.set_title("BF Stingray ECG")
-
-# ACC
-fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(12, 7))
-ax1.plot(anne.df_chest["Timestamp"], anne.df_chest['accx_g'], color='red')
-ax1.set_title("Chest ANNE Acc_x")
-ax2.plot(bf.timestamps[::10], bf.accel_x, color='black')
-ax2.set_title("BF Stingray Acc_x")
-
-"""
+# anne.plot_acc(sample_rate=25, show_filtered=True)
 
 
-def compare_epoch_hr(plot_type="time series"):
+def epoch_hr_blandaltman():
 
-    if plot_type == "time series" or plot_type == "timeseries":
-        fig, ax = plt.subplots(1, figsize=(12, 7))
+    means = []
+    diffs = []
+    for b, a in zip(bf.valid_hr, anne.epoch_hr["hr_bpm"]):
+        if b is not None and not np.isnan(a):
+            means.append((b+a)/2)
+            diffs.append(b-a)
 
-        ax.plot(bf.epoch_timestamps, bf.valid_hr, label='Bittium', color='black')
-        ax.axvline(x=bf.epoch_timestamps[-1], linestyle='dashed', color='black', label="End BF")
+    loa = np.std(diffs) * 1.96
+    bias = np.mean(diffs)
 
-        ax.plot(anne.epoch_hr["Timestamp"], anne.epoch_hr["hr_bpm"], label='ANNE', color='red')
-        ax.axvline(x=anne.epoch_hr["Timestamp"].iloc[-1], linestyle='dashed', color='red', label="End ANNE")
+    fig, ax = plt.subplots(1, figsize=(12, 7))
+    ax.scatter(x=means, y=diffs, color='black', s=5)
 
-        ax.legend(loc='best')
-        ax.set_ylabel("HR (bpm)")
-        plt.title("15-second avg HR comparison")
+    ax.axhline(bias + loa, color='red', linestyle='dashed', label='Upper LOA ({}bpm)'.format(round(bias+loa, 1)))
+    ax.axhline(bias, color='black', linestyle='dashed', label='Bias ({}bpm)'.format(round(bias, 1)))
+    ax.axhline(bias - loa, color='red', linestyle='dashed', label='Lower LOA ({}bpm)'.format(round(bias-loa, 1)))
 
-        ax.xaxis.set_major_formatter(xfmt)
-        plt.xticks(rotation=45, fontsize=8)
+    ax.fill_between(x=[min(means), max(means)], y1=plt.ylim()[0], y2=bias - loa, color='red', alpha=.25)
+    ax.fill_between(x=[min(means), max(means)], y1=bias + loa, y2=plt.ylim()[1], color='red', alpha=.25)
+    ax.fill_between(x=[min(means), max(means)], y1=bias - loa, y2=bias + loa, color='green', alpha=.25)
 
-    if plot_type == "blandaltman":
+    ax.set_xlabel("Mean HR")
+    ax.set_ylabel("Difference (BF - ANNE)")
+    plt.legend()
 
-        means = []
-        diffs = []
-        for b, a in zip(bf.valid_hr, anne.epoch_hr["hr_bpm"]):
-            if b is not None and not np.isnan(a):
-                means.append((b+a)/2)
-                diffs.append(b-a)
-
-        loa = np.std(diffs) * 1.96
-        bias = np.mean(diffs)
-
-        fig, ax = plt.subplots(1, figsize=(12, 7))
-        ax.scatter(x=means, y=diffs, color='black', s=5)
-
-        ax.axhline(bias + loa, color='red', linestyle='dashed', label='Upper LOA ({}bpm)'.format(round(bias+loa, 1)))
-        ax.axhline(bias, color='black', linestyle='dashed', label='Bias ({}bpm)'.format(round(bias, 1)))
-        ax.axhline(bias - loa, color='red', linestyle='dashed', label='Lower LOA ({}bpm)'.format(round(bias-loa, 1)))
-
-        ax.fill_between(x=[min(means), max(means)], y1=plt.ylim()[0], y2=bias - loa, color='red', alpha=.25)
-        ax.fill_between(x=[min(means), max(means)], y1=bias + loa, y2=plt.ylim()[1], color='red', alpha=.25)
-        ax.fill_between(x=[min(means), max(means)], y1=bias - loa, y2=bias + loa, color='green', alpha=.25)
-
-        ax.set_xlabel("Mean HR")
-        ax.set_ylabel("Difference (BF - ANNE)")
-        plt.legend()
-
-        perc_same = len([i for i in diffs if (bias - loa) <= i <= (bias + loa)]) / len(diffs) * 100
-        ax.set_title("Bland-Altman Comparison ({}% agreement)".format(round(perc_same, 1)))
-
-
-def plot_hr_and_movement():
-    """Plots HR and ANNE chest accelerometer SVM."""
-
-    fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(12, 7))
-    ax1.set_title("HR and Movement Data")
-
-    ax1.plot(anne.epoch_hr["Timestamp"], anne.epoch_hr["hr_bpm"], color='red')
-    ax1.set_ylabel("HR (bpm)")
-
-    ax2.plot(anne.epoch_acc["Timestamp"], anne.epoch_acc["SVM"], color='dodgerblue')
-    ax2.set_ylabel("SVM")
-
-    ax2.xaxis.set_major_formatter(xfmt)
-    plt.xticks(rotation=45, fontsize=8)
+    perc_same = len([i for i in diffs if (bias - loa) <= i <= (bias + loa)]) / len(diffs) * 100
+    ax.set_title("Bland-Altman Comparison ({}% agreement)".format(round(perc_same, 1)))
 
 
 # ==================================================== DATA VISUALIZATION =============================================
@@ -634,135 +525,412 @@ def plot_hr_and_movement():
 # anne.plot_events()
 
 """Compares 15-second averaged HR between chest ANNE and Bittium Faros"""
-# plot_type: 'timeseries' or 'blandaltman'
-# compare_epoch_hr(plot_type="blandaltman")
-
-"""Plots ANNE chest HR and accelerometer SVM"""
-# Can use to see if movement affects ECG quality (missing HR data)
-# plot_hr_and_movement()
-
-# TODO
-# Plot to compare validity
+# epoch_hr_blandaltman()
 
 
-class ANNEViewer:
+class DataViewer:
 
-    def __init__(self, anne_obj=None, bf_obj=None):
+    def __init__(self, anne_obj=None, bf_obj=None, fig_width=10, fig_height=6):
 
         self.anne = anne_obj
         self.bf = bf_obj
 
-        self.anne_ecg_dict = {"hr_bpm": False, "rr_rpm": False, "chesttemp_c": False,
-                              "epoch_hr": False, "ECG": False}
-        self.anne_acc_dict = {"x": False, "y": False, "z": False, "SVM": False}
-        self.anne_limb_dict = {"spO2_perc": False, "pr_bpm": False, "limb_temp": False, "ppg": False}
+        self.fig_width = fig_width
+        self.fig_height = fig_height
+
+        if self.bf is not None:
+            self.bf.accel_x = [i / 1000 for i in self.bf.accel_x]
+            self.bf.accel_y = [i / 1000 for i in self.bf.accel_y]
+            self.bf.accel_z = [i / 1000 for i in self.bf.accel_z]
+            self.bf.accel_vm = [i / 1000 for i in self.bf.accel_vm]
+
+        self.hr_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False}
+        self.accel_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False,
+                                "WristGA": False, "AnkleGA": False}
+        self.accel_axis_dict = {"x": False, "y": False, "z": False, "SVM": False}
+        self.temp_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "WristGA": False, "AnnkleGA": False}
+        self.misc_plot_dict = {"ANNE Limb ppg": False, "ANNE Limb sO2": False,
+                               "ANNE Chest Resp.": False, "ECG Validity": False}
+        self.show_events = False
 
         self.check1 = None
         self.check2 = None
+        self.check2axis = None
         self.check3 = None
+        self.check4 = None
         self.reload_button = None
+        self.raw_button = None
+        self.cooked_button = None
+        self.events_button = None
+        self.help_button = None
 
-    def generate_plot(self):
+    def by_data(self):
 
         plt.close("all")
-        fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(12, 9))
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, sharex='col', figsize=(self.fig_width, self.fig_height))
         plt.subplots_adjust(right=.8, hspace=.28)
-
-        # ANNE CHEST ECG ----------------------------------------------------------------------------------------------
-        ax1.set_title("ANNE Chest ECG")
-
-        if True in self.anne_ecg_dict.values():
-            for key in test.anne_ecg_dict.keys():
-                if test.anne_ecg_dict[key]:
-                    if key == "epoch_hr":
-                        ax1.plot(self.anne.epoch_hr["Timestamp"], self.anne.epoch_hr['hr_bpm'],
-                                 color='red', label="epoch_hr")
-                        ax1.set_ylabel(key)
-
-                    if key == "ECG":
-                        ax1.plot(self.anne.chest_ecg["Timestamp"][::5], self.anne.chest_ecg['ecg'][::5],
-                                 color='red', label="ECG")
-                        ax1.set_ylabel(key)
-
-                    if key in ["rr_rpm", "chesttemp_c", "hr_bpm"]:
-                        ax1.plot(self.anne.df_chest["Timestamp"], self.anne.df_chest[key],
-                                 color='red', label=key)
-                        ax1.set_ylabel(key)
-                ax1.legend(loc='upper right')
-
-        # ANNE CHEST ACC ----------------------------------------------------------------------------------------------
-        ax2.set_title("ANNE Chest Acc")
-
-        if True in self.anne_acc_dict.values():
-            for key in self.anne_acc_dict.keys():
-                if self.anne_acc_dict[key]:
-                    if key == "x":
-                        ax2.plot(self.anne.chest_acc["Timestamp"][::2], self.anne.chest_acc["x"][::2],
-                                 label='x', color='green')
-                    if key == "y":
-                        ax2.plot(self.anne.chest_acc["Timestamp"][::2], self.anne.chest_acc["y"][::2],
-                                 label='y', color='dodgerblue')
-                    if key == "z":
-                        ax2.plot(self.anne.chest_acc["Timestamp"][::16], self.anne.chest_acc["z"][::16],
-                                 label='z', color='black')
-                    if key == "SVM":
-                        ax2.plot(self.anne.epoch_acc["Timestamp"], self.anne.epoch_acc["SVM"],
-                                 color='black', label="SVM")
-
-            ax2.legend(loc='upper right')
-
-        # ANNE LIMB ---------------------------------------------------------------------------------------------------
-        ax3.set_title("ANNE Limb")
-
-        if True in self.anne_limb_dict.values():
-            for key in self.anne_limb_dict.keys():
-                if self.anne_limb_dict[key]:
-                    if key == "ppg":
-                        ax3.plot(self.anne.limb_ppg["Timestamp"][::4], self.anne.limb_ppg["red"][::4],
-                                 color='red', label="Red light")
-                        ax3.plot(self.anne.limb_ppg["Timestamp"][::4], self.anne.limb_ppg["ir"][::4],
-                                 color='black', label='IR')
-                    if key != "ppg":
-                        ax3.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb[key], color='purple', label=key)
-
-            ax3.legend(loc='upper right')
-
-        ax3.xaxis.set_major_formatter(xfmt)
+        ax4.xaxis.set_major_formatter(xfmt)
         plt.xticks(rotation=45, fontsize=8)
 
-        # Check boxes -------------------------------------------------------------------------------------------------
-        rax1 = plt.axes([.81, .661, .18, .22])
-        self.check1 = CheckButtons(rax1, ("hr_bpm", "rr_rpm", "chesttemp_c", "epoch_hr", "ECG"),
+        """============================================== Heart Rate ==============================================="""
+        ax1.set_title("Heart Rate Data")
+        ax1.set_ylabel("bpm")
+
+        # ANNE Chest
+        if self.hr_plot_dict["ANNE Chest"]:
+            ax1.plot(self.anne.df_chest["Timestamp"], self.anne.df_chest["hr_bpm"],
+                     color='red', label='ANNE Chest')
+
+        # ANNE Limb
+        if self.hr_plot_dict["ANNE Limb"]:
+            ax1.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb["pr_bpm"],
+                     color='dodgerblue', label='ANNE Limb')
+
+        # Bittium Faros
+        if self.hr_plot_dict["BittiumFaros"]:
+            ax1.plot(self.bf.epoch_timestamps, self.bf.valid_hr, 
+                     color='black', label='BittiumFaros')
+
+        if True in self.hr_plot_dict.values():
+            ax1.legend(loc='upper left')
+
+        rax1 = plt.axes([.81, .72, .18, .16])
+        self.check1 = CheckButtons(rax1, ("ANNE Chest", "ANNE Limb", "BittiumFaros"),
+                                   (False, False, False))
+
+        """============================================= Accelerometer ============================================="""
+        ax2.set_title("Accelerometer Data")
+
+        # Colors based on how much data is being plotted
+        if [i for i in self.accel_plot_dict.values()].count(True) == 1:
+            colors = ['red', 'dodgerblue', 'black']
+        if [i for i in self.accel_plot_dict.values()].count(True) > 1 and \
+                [i for i in self.accel_axis_dict.values()].count(True) > 1:
+            print("\n-Accelerometer data is going to be a mess...")
+
+        # ANNE Chest
+        if self.accel_plot_dict["ANNE Chest"] and self.anne.chest_ecg_file is not None:
+            if [i for i in self.accel_plot_dict.values()].count(True) > 1:
+                colors = ['red', 'red', 'red']
+
+            if self.accel_axis_dict["x"]:
+                ax2.plot(self.anne.chest_acc["Timestamp"][::2], self.anne.chest_acc["x"][::2],
+                         label="ANNE_x", color=colors[0])
+            if self.accel_axis_dict["y"]:
+                ax2.plot(self.anne.chest_acc["Timestamp"][::2], self.anne.chest_acc["y"][::2],
+                         label="ANNE_y", color=colors[1])
+            if self.accel_axis_dict["z"]:
+                ax2.plot(self.anne.chest_acc["Timestamp"][::16], self.anne.chest_acc["z"][::16],
+                         label="ANNE_z", color=colors[2])
+
+            if self.accel_axis_dict["SVM"]:
+                ax2.plot(self.anne.epoch_acc["Timestamp"], self.anne.epoch_acc["SVM"], label="ANNE Chest", color='red')
+
+        """if self.accel_plot_dict["ANNE Limb"]:
+            pass"""
+
+        # Bittium Faros
+        if self.accel_plot_dict["BittiumFaros"]:
+            if [i for i in self.accel_plot_dict.values()].count(True) > 1:
+                colors = ['black', 'black', 'black']
+
+            ratio = int(self.bf.sample_rate / self.bf.accel_sample_rate)
+
+            if self.accel_axis_dict["x"]:
+                ax2.plot(self.bf.timestamps[::ratio], self.bf.accel_x, label="BF_x", color=colors[0])
+            if self.accel_axis_dict["y"]:
+                ax2.plot(self.bf.timestamps[::ratio], self.bf.accel_y, label="BF_y", color=colors[1])
+            if self.accel_axis_dict["z"]:
+                ax2.plot(self.bf.timestamps[::ratio], self.bf.accel_z, label="BF_z", color=colors[2])
+
+            if self.accel_axis_dict["SVM"]:
+                ax2.plot(self.bf.epoch_timestamps[:len(self.bf.svm)], self.bf.svm, label="BF_SVM", color='black')
+
+        """Placeholder for Wrist GA"""
+
+        """Placeholder for Ankle GA"""
+
+        if True in self.accel_plot_dict.values():
+            ax2.legend(loc='upper left')
+
+        rax2 = plt.axes([.81, .5175, .115, .16])
+        rax2_2 = plt.axes([.925, .5175, .065, .16])
+
+        self.check2 = CheckButtons(rax2, ("ANNE Chest", "ANNE Limb", "BittiumFaros", "WristGA", "AnkleGA"),
+                                   (False, False, False, False, False))
+        self.check2axis = CheckButtons(rax2_2, ("x", "y", "z", "SVM"), (False, False, False, False))
+
+        """============================================= Temperature ==============================================="""
+        ax3.set_title("Temperature Data")
+        ax3.set_ylabel("Celcius")
+
+        rax3 = plt.axes([.81, .3125, .18, .16])
+
+        self.check3 = CheckButtons(rax3, ("ANNE Chest", "ANNE Limb", "WristGA", "AnkleGA"),
                                    (False, False, False, False, False))
 
-        rax2 = plt.axes([.81, .385, .18, .22])
-        self.check2 = CheckButtons(rax2, ("Acc_x", "Acc_y", "Acc_z", "SVM"), (False, False, False, False))
+        if self.temp_plot_dict["ANNE Chest"]:
+            ax3.plot(self.anne.df_chest["Timestamp"], self.anne.df_chest["chesttemp_c"],
+                     color='red', label="Chest ANNE")
 
-        rax3 = plt.axes([.81, .11, .18, .2175])
-        self.check3 = CheckButtons(rax3, ("spO2_perc", "pr_bpm", "limb_temp", "ppg"), (False, False, False, False))
+        if self.temp_plot_dict["ANNE Limb"]:
+            ax3.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb["limb_temp"],
+                     color='dodgerblue', label="Limb ANNE")
 
-        rax_reload = plt.axes([0.85, 0.05, 0.1, .05])
-        self.reload_button = Button(rax_reload, 'Redraw', color='limegreen')
+        if True in self.temp_plot_dict.values():
+            ax3.legend(loc='upper left')
 
-        self.reload_button.on_clicked(self.get_values)
+        """============================================= Miscellaneous ============================================="""
+        ax4.set_title("Miscellaneous Data")
 
-    def get_values(self, event):
-        print("Reloading...")
+        rax4 = plt.axes([.81, .11, .18, .16])
+        self.check4 = CheckButtons(rax4, ("ANNE Limb ppg", "ANNE Limb sO2", "ANNE Chest Resp.", "ECG Validity"),
+                                   (False, False, False, False))
+
+        if self.misc_plot_dict["ANNE Limb ppg"]:
+            ax4.plot(self.anne.limb_ppg["Timestamp"][::2], self.anne.limb_ppg["red"][::2],
+                     color='red', label='Red light')
+            ax4.plot(self.anne.limb_ppg["Timestamp"][::2], self.anne.limb_ppg["ir"][::2],
+                     color='grey', label='IR light')
+
+        if self.misc_plot_dict["ANNE Limb sO2"]:
+            ax4.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb["spO2_perc"],
+                     color='dodgerblue', label='ANNE Limb')
+            ax4.set_ylim(0, 100)
+            ax4.set_ylabel("Percent")
+
+        if self.misc_plot_dict["ANNE Chest Resp."]:
+            ax4.plot(self.anne.df_chest["Timestamp"], self.anne.df_chest["rr_rpm"], color='red', label="ANNE Chest")
+            ax4.set_ylabel("Breaths/min")
+
+        if self.misc_plot_dict["ECG Validity"]:
+            ax4.plot(self.bf.epoch_timestamps[:len(self.bf.epoch_validity)], self.bf.epoch_validity,
+                     color='black', label='BittiumFaros')
+
+            anne_data = ["Valid" if not np.isnan(i) else "Invalid" for i in self.anne.df_chest["hr_bpm"]]
+            ax4.plot(self.anne.df_chest["Timestamp"], anne_data, linestyle='dashed', color="red", label="ANNE Chest")
+
+        if True in self.misc_plot_dict.values():
+            ax4.legend(loc='upper left')
+
+        """============================================= Event Plotting ============================================"""
+        if self.show_events:
+
+            plt.suptitle("Check Python console for event colour coding.")
+
+            print("\nEvent colour code:")
+            print("-Grey shaded = nonwear (any)")
+            print("-Dark blue shaded = sleep")
+            print("-Orange line = seated speech passage")
+            print("-Green line = outdoor walk")
+            print("-Purple = indoor walk")
+
+            df_event = self.anne.df_event
+
+            # Device Removal
+            nw = df_event.loc[df_event["LogType"] == "Device Removal"]
+
+            for row in nw.itertuples():
+                ax1.fill_betweenx(x1=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                       str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                                  x2=datetime.strptime(str(row.EndDate.date()) + " " +
+                                                       str(row.EndTime), "%Y-%m-%d %H:%M:%S"),
+                                  y=[0, 200], color='grey', alpha=.5)
+                ax2.fill_betweenx(x1=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                       str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                                  x2=datetime.strptime(str(row.EndDate.date()) + " " +
+                                                       str(row.EndTime), "%Y-%m-%d %H:%M:%S"),
+                                  y=ax2.get_ylim(), color='grey', alpha=.5)
+                ax3.fill_betweenx(x1=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                       str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                                  x2=datetime.strptime(str(row.EndDate.date()) + " " +
+                                                       str(row.EndTime), "%Y-%m-%d %H:%M:%S"),
+                                  y=ax3.get_ylim(), color='grey', alpha=.5)
+                ax4.fill_betweenx(x1=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                       str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                                  x2=datetime.strptime(str(row.EndDate.date()) + " " +
+                                                       str(row.EndTime), "%Y-%m-%d %H:%M:%S"),
+                                  y=ax4.get_ylim(), color='grey', alpha=.5)
+
+            # Sleep
+            sleep = df_event.loc[df_event["LogType"] == "Sleep"]
+
+            for row in sleep.itertuples():
+                ax1.fill_betweenx(x1=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                       str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                                  x2=datetime.strptime(str(row.EndDate.date()) + " " +
+                                                       str(row.EndTime), "%Y-%m-%d %H:%M:%S"),
+                                  y=[0, 200], color='darkblue', alpha=.25)
+                ax2.fill_betweenx(x1=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                       str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                                  x2=datetime.strptime(str(row.EndDate.date()) + " " +
+                                                       str(row.EndTime), "%Y-%m-%d %H:%M:%S"),
+                                  y=ax2.get_ylim(), color='darkblue', alpha=.25)
+                ax3.fill_betweenx(x1=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                       str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                                  x2=datetime.strptime(str(row.EndDate.date()) + " " +
+                                                       str(row.EndTime), "%Y-%m-%d %H:%M:%S"),
+                                  y=ax3.get_ylim(), color='darkblue', alpha=.25)
+                ax4.fill_betweenx(x1=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                       str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                                  x2=datetime.strptime(str(row.EndDate.date()) + " " +
+                                                       str(row.EndTime), "%Y-%m-%d %H:%M:%S"),
+                                  y=ax4.get_ylim(), color='darkblue', alpha=.25)
+
+            # Seated speech passage
+            df = df_event.loc[df_event["LogType"] == "Daily Task"]
+            df = df.loc[df["Task"] == "Seated speech passage"]
+
+            for row in df.itertuples():
+                ax1.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='orange', linestyle='dashed')
+                ax2.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='orange', linestyle='dashed')
+                ax3.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='orange', linestyle='dashed')
+                ax4.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='orange', linestyle='dashed')
+
+            # Outdoor Walk
+            df = df_event.loc[df_event["LogType"] == "Daily Task"]
+            df = df.loc[df["Task"] == "Outdoor walk protocol"]
+
+            for row in df.itertuples():
+                ax1.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='green', linestyle='dashed')
+                ax2.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='green', linestyle='dashed')
+                ax3.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='green', linestyle='dashed')
+                ax4.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='green', linestyle='dashed')
+            # Indoor Walk
+            df = df_event.loc[df_event["LogType"] == "Daily Task"]
+            df = df.loc[df["Task"] == "Indoor walk protocol"]
+
+            for row in df.itertuples():
+                ax1.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='mediumorchid', linestyle='dashed')
+                ax2.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='mediumorchid', linestyle='dashed')
+                ax3.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='mediumorchid', linestyle='dashed')
+                ax4.axvline(x=datetime.strptime(str(row.StartDate.date()) + " " +
+                                                str(row.StartTime), "%Y-%m-%d %H:%M:%S"),
+                            color='mediumorchid', linestyle='dashed')
+
+        ax4.xaxis.set_major_formatter(xfmt)
+        plt.xticks(rotation=45, fontsize=8)
+
+        """================================================ Buttons ==============================================="""
+
+        rax_help = plt.axes([0.84, .01 + .043, 0.15, .043])
+        self.help_button = Button(rax_help, 'Print descriptions', color='orange')
+        self.help_button.on_clicked(self.print_desc)
+
+        rax_reload = plt.axes([0.917, 0.005, 0.074, .042])
+        self.reload_button = Button(rax_reload, 'Reload', color='limegreen')
+        self.reload_button.on_clicked(self.get_values_bydata)
+
+        rax_events = plt.axes([0.84, 0.005, 0.074, .043])
+        self.events_button = Button(rax_events, 'Show/Hide\nEvents', color='lightgrey')
+        self.events_button.on_clicked(self.set_events)
+
+    def get_values_bydata(self, event):
+        print("\nReloading...")
 
         ax1_vals = self.check1.get_status()
-        self.anne_ecg_dict.update(zip([i for i in self.anne_ecg_dict.keys()], ax1_vals))
+        self.hr_plot_dict.update(zip([i for i in self.hr_plot_dict.keys()], ax1_vals))
 
         ax2_vals = self.check2.get_status()
-        self.anne_acc_dict.update(zip([i for i in self.anne_acc_dict.keys()], ax2_vals))
+        self.accel_plot_dict.update(zip([i for i in self.accel_plot_dict.keys()], ax2_vals))
+
+        ax2_vals_axis = self.check2axis.get_status()
+        self.accel_axis_dict.update(zip([i for i in self.accel_axis_dict.keys()], ax2_vals_axis))
 
         ax3_vals = self.check3.get_status()
-        self.anne_limb_dict.update(zip([i for i in self.anne_limb_dict.keys()], ax3_vals))
+        self.temp_plot_dict.update(zip([i for i in self.temp_plot_dict.keys()], ax3_vals))
 
-        self.generate_plot()
+        ax4_vals = self.check4.get_status()
+        self.misc_plot_dict.update(zip([i for i in self.misc_plot_dict.keys()], ax4_vals))
+
+        self.by_data()
+
+    def set_events(self, event):
+        self.show_events = not self.show_events
+
+        self.by_data()
+
+    def reset_plot(self):
+
+        self.hr_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False}
+        self.accel_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False,
+                                "WristGA": False, "AnkleGA": False}
+        self.accel_axis_dict = {"x": False, "y": False, "z": False, "SVM": False}
+        self.temp_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "WristGA": False, "AnnkleGA": False}
+        self.misc_plot_dict = {"ANNE Limb ppg": False, "ANNE Limb sO2": False,
+                               "ANNE Chest Resp.": False, "ECG Validity": False}
+
+        self.show_events = False
+
+    @staticmethod
+    def print_desc(event):
+
+        print("\n========================= PLOT OPERATION AND DESCRIPTION ========================= ")
+
+        print("\nOPERATION:")
+        print("-Check off the box for all the data you wish to see. Then click the 'reload' button.")
+        print("-To show or hide the events from the ANNE validation protocol, click the 'Show/Hide Events' button.")
+
+        print("\nDATA DESCRIPTIONS:")
+
+        print("Axis #1:")
+        print("-ANNE Chest: HR in 200ms intervals as calculated by the chest ANNE's ECG.")
+        print("-ANNE Limb: HR in 200ms intervals as calculated by the limb ANNE's PPG.")
+        print("-BittiumFaros: HR in 15 second intervals as calculated by Bittium's ECG.")
+
+        print("\nAxis #2:")
+        print("-Left column")
+        print("     -ANNE Chest: raw accelerometer data from chest ANNE. Downsampled by a factor of 2.")
+        print("     -ANNE Limb: temporary placeholder until we figure out where this data is...")
+        print("     -BittiumFaros: raw accelerometer data from Bittium Faros. 25Hz.")
+        print("     -WristGA: temporary placeholder.")
+        print("     -AnkleGA: temporary placeholder.")
+        print("-Right column:")
+        print("     -x/y/z: which axis/axes to plot.")
+        print("          -If viewing multiple devices, it looks stupid if you pick multiple axes.")
+        print("          -Stick to multi-axial on one device or uniaxial on multiple devices.")
+        print("     -SVM: sum of vector magnitudes in 15-second epochs.")
+
+        print("\nAxis #3:")
+        print("-ANNE Chest: temperature data in 200ms intervals from chest ANNE.")
+        print("-ANNE Limb: temperature data in 200ms intervals from limb ANNE.")
+        print("-WristGA: temporary placeholder.")
+        print("-AnkleGA: temporary placeholder.")
+
+        print("\nAxis #4:")
+        print("-ANNE Limb ppg: both light frequencies (red, ir) from ANNE limb PPG. Downsampled by a factor of 2.")
+        print("-ANNE Limb sO2: percent oxygen saturation in 200ms intervals from limb ANNE.")
+        print("-ANNE Chest Resp.: respiration rate in 200ms intervals from chest ANNE.")
+        print("-ECG Validity: ECG signal quality from chest ANNE and Bittium Faros.")
+        print("     -ANNE Chest: unknown algorithm, 200ms intervals.")
+        print("     -Bittium Faros: modified Orphanidou et al. (2015) algorithm, 15s intervals.")
 
 
-test = ANNEViewer(anne_obj=anne, bf_obj=None)
+test = DataViewer(anne_obj=anne, bf_obj=bf, fig_width=12, fig_height=9)
+test.by_data()
+test.reset_plot()
 
-# Empty plot
-# test.generate_plot()
-
+# TODO
+# Add raw ECG to ax1. Add description to print_desc()
