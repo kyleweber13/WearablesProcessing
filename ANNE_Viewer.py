@@ -9,7 +9,7 @@ import ECG
 import ImportEDF
 from matplotlib.widgets import CheckButtons
 from matplotlib.widgets import Button
-from matplotlib.widgets import RadioButtons
+from sklearn import preprocessing
 
 xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
 
@@ -421,7 +421,7 @@ def crop_data(bf_file):
 
     bf_index = 0
 
-    if bf_file is None:
+    if bf_file is None or anne.df_chest is None:
         return 0
 
     bf_start, bf_end, bf_fs, bf_dur = ImportEDF.check_file(filepath=bf_file, print_summary=False)
@@ -437,9 +437,6 @@ def crop_data(bf_file):
         anne_chest_acc = int((bf_start - chest_start).total_seconds() * anne.chest_accz_fs)
         anne_chest_vital = int((bf_start - chest_start).total_seconds() * 5)
 
-        # anne.chest_ecg = anne.chest_ecg.iloc[anne_chest_ecg:]
-        # anne.chest_acc = anne.chest_acc.iloc[anne_chest_acc:]
-        # anne.df_chest = anne.df_chest.iloc[anne_chest_vital:]
         anne.chest_ecg = anne.chest_ecg.loc[anne.chest_ecg["Timestamp"] >= bf_start]
         anne.chest_acc = anne.chest_acc.loc[anne.chest_acc["Timestamp"] >= bf_start]
 
@@ -448,24 +445,24 @@ def crop_data(bf_file):
 
 # =========================================================== SET UP ==================================================
 
-bittium_file = "C:/Users/ksweber/Desktop/007_Test_Chest_C1515/007_Stingray.EDF"
+bittium_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Stingray.EDF"
 
 anne = ANNE(subj_id="007",
-            chest_acc_file="C:/Users/ksweber/Desktop/007_Test_Chest_C1515/accl.csv",
-            chest_ecg_file="C:/Users/ksweber/Desktop/007_Test_Chest_C1515/ecg.csv",
-            chest_out_vital_file="C:/Users/ksweber/Desktop/007_Test_Chest_C1515/out_vital.csv",
-            limb_ppg_file="C:/Users/ksweber/Desktop/007_Test_Limb_L1307/ppg.csv",
-            limb_out_vital_file="C:/Users/ksweber/Desktop/007_Test_Limb_L1307/out_vital.csv",
+            chest_acc_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_accl.csv",
+            chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.csv",
+            chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.csv",
+            limb_ppg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_ppg.csv",
+            limb_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_out_vital.csv",
             log_file="C:/Users/ksweber/Desktop/ANNE_Validation_Logs.xlsx")
 anne.import_data()
 
 bittium_offset = crop_data(bf_file=bittium_file)
-
+bf = None
 
 bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
              output_dir=None, processed_folder=None,
              processed_file=None, ecg_downsample=1,
-             age=26, start_offset=bittium_offset, end_offset=0,
+             age=26, start_offset=bittium_offset if bittium_offset is not None else 0, end_offset=0,
              rest_hr_window=60, n_epochs_rest=30,
              epoch_len=15, load_accel=True,
              filter_data=False, low_f=1, high_f=30, f_type="bandpass",
@@ -476,7 +473,7 @@ anne.epoch_hr = anne.epoch_chest_hr(epoch_len=15)
 anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
 
 # Filters ecg data
-# anne.filter_ecg_data(filter_type='bandpass', low_f=.67, high_f=25)
+anne.filter_ecg_data(filter_type='bandpass', low_f=.67, high_f=25)
 
 # Plots ecg data. Able to plot just raw or raw and filtered. Able to adjust sample rate.
 # anne.plot_ecg(show_filtered=True, sample_rate=125)
@@ -545,6 +542,7 @@ class DataViewer:
             self.bf.accel_vm = [i / 1000 for i in self.bf.accel_vm]
 
         self.hr_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False}
+        self.hr_data_dict = {"HR": False, "Raw": False, "Filt.": False}
         self.accel_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False,
                                 "WristGA": False, "AnkleGA": False}
         self.accel_axis_dict = {"x": False, "y": False, "z": False, "SVM": False}
@@ -554,6 +552,7 @@ class DataViewer:
         self.show_events = False
 
         self.check1 = None
+        self.check1_data = None
         self.check2 = None
         self.check2axis = None
         self.check3 = None
@@ -564,7 +563,7 @@ class DataViewer:
         self.events_button = None
         self.help_button = None
 
-    def by_data(self):
+    def plot_data(self):
 
         plt.close("all")
         fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, sharex='col', figsize=(self.fig_width, self.fig_height))
@@ -574,29 +573,51 @@ class DataViewer:
 
         """============================================== Heart Rate ==============================================="""
         ax1.set_title("Heart Rate Data")
-        ax1.set_ylabel("bpm")
+
+        if not self.hr_data_dict["Raw"] and not self.hr_data_dict["Filt."] and self.hr_data_dict["HR"]:
+            ax1.set_ylabel("bpm")
+        if (self.hr_data_dict["Raw"] or self.hr_data_dict["Filt."]) and not self.hr_data_dict["HR"]:
+            ax1.set_ylabel("Voltage (scaled)")
 
         # ANNE Chest
         if self.hr_plot_dict["ANNE Chest"]:
-            ax1.plot(self.anne.df_chest["Timestamp"], self.anne.df_chest["hr_bpm"],
-                     color='red', label='ANNE Chest')
+            if self.hr_data_dict["HR"]:
+                ax1.plot(self.anne.df_chest["Timestamp"], self.anne.df_chest["hr_bpm"],
+                         color='red', label='ANNE Chest')
+            if self.hr_data_dict["Raw"]:
+                ax1.plot(self.anne.chest_ecg["Timestamp"][::4],
+                         preprocessing.scale(self.anne.chest_ecg["ecg"][::4]),
+                         color='red', label='Chest ANNE')
+            if self.hr_data_dict["Filt."]:
+                ax1.plot(self.anne.chest_ecg["Timestamp"][::4],
+                         preprocessing.scale(self.anne.chest_ecg["ecg_filt"][::4]),
+                         color='red', label='Chest ANNE')
 
         # ANNE Limb
-        if self.hr_plot_dict["ANNE Limb"]:
+        if self.hr_plot_dict["ANNE Limb"] and self.hr_data_dict["HR"]:
             ax1.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb["pr_bpm"],
                      color='dodgerblue', label='ANNE Limb')
 
         # Bittium Faros
         if self.hr_plot_dict["BittiumFaros"]:
-            ax1.plot(self.bf.epoch_timestamps, self.bf.valid_hr, 
-                     color='black', label='BittiumFaros')
+            if self.hr_data_dict["HR"]:
+                ax1.plot(self.bf.epoch_timestamps, self.bf.valid_hr, color='black', label='BittiumFaros')
+            if self.hr_data_dict["Raw"]:
+                ax1.plot(self.bf.timestamps[::2], preprocessing.scale(self.bf.raw[::2]),
+                         color='black', label="BittiumFaros")
+            if self.hr_data_dict["Filt."]:
+                ax1.plot(self.bf.timestamps[::2], preprocessing.scale(self.bf.filtered[::2]),
+                         color='black', label="BittiumFaros")
 
         if True in self.hr_plot_dict.values():
             ax1.legend(loc='upper left')
 
+        # rax1 = plt.axes([.81, .72, .18, .16])
         rax1 = plt.axes([.81, .72, .18, .16])
+        rax1_2 = plt.axes([.935, .72, .055, .16])
         self.check1 = CheckButtons(rax1, ("ANNE Chest", "ANNE Limb", "BittiumFaros"),
                                    (False, False, False))
+        self.check1_data = CheckButtons(rax1_2, ("HR", "Raw", "Filt."), (False, False, False))
 
         """============================================= Accelerometer ============================================="""
         ax2.set_title("Accelerometer Data")
@@ -836,22 +857,25 @@ class DataViewer:
         """================================================ Buttons ==============================================="""
 
         rax_help = plt.axes([0.84, .01 + .043, 0.15, .043])
-        self.help_button = Button(rax_help, 'Print descriptions', color='orange')
+        self.help_button = Button(rax_help, 'Print descriptions', color='crimson')
         self.help_button.on_clicked(self.print_desc)
 
         rax_reload = plt.axes([0.917, 0.005, 0.074, .042])
-        self.reload_button = Button(rax_reload, 'Reload', color='limegreen')
-        self.reload_button.on_clicked(self.get_values_bydata)
+        self.reload_button = Button(rax_reload, 'Reload', color='chartreuse')
+        self.reload_button.on_clicked(self.get_values)
 
         rax_events = plt.axes([0.84, 0.005, 0.074, .043])
-        self.events_button = Button(rax_events, 'Show/Hide\nEvents', color='lightgrey')
+        self.events_button = Button(rax_events, 'Show/Hide\nEvents', color='mediumturquoise')
         self.events_button.on_clicked(self.set_events)
 
-    def get_values_bydata(self, event):
+    def get_values(self, event):
         print("\nReloading...")
 
         ax1_vals = self.check1.get_status()
         self.hr_plot_dict.update(zip([i for i in self.hr_plot_dict.keys()], ax1_vals))
+
+        ax1_vals_data = self.check1_data.get_status()
+        self.hr_data_dict.update(zip([i for i in self.hr_data_dict.keys()], ax1_vals_data))
 
         ax2_vals = self.check2.get_status()
         self.accel_plot_dict.update(zip([i for i in self.accel_plot_dict.keys()], ax2_vals))
@@ -865,12 +889,12 @@ class DataViewer:
         ax4_vals = self.check4.get_status()
         self.misc_plot_dict.update(zip([i for i in self.misc_plot_dict.keys()], ax4_vals))
 
-        self.by_data()
+        self.plot_data()
 
     def set_events(self, event):
         self.show_events = not self.show_events
 
-        self.by_data()
+        self.plot_data()
 
     def reset_plot(self):
 
@@ -896,9 +920,18 @@ class DataViewer:
         print("\nDATA DESCRIPTIONS:")
 
         print("Axis #1:")
-        print("-ANNE Chest: HR in 200ms intervals as calculated by the chest ANNE's ECG.")
-        print("-ANNE Limb: HR in 200ms intervals as calculated by the limb ANNE's PPG.")
-        print("-BittiumFaros: HR in 15 second intervals as calculated by Bittium's ECG.")
+        print("-Left column:")
+        print("     -ANNE Chest: show ANNE chest data.")
+        print("     -ANNE Limb: show ANNE limb data.")
+        print("     -BittiumFaros: show Bittium Faros data.")
+        print("-Right column:")
+        print("     -HR: shows HR.")
+        print("          -ANNE Chest: 200ms intervals derived from ECG.")
+        print("          -ANNE Limb: 200ms intervals derived from PPG.")
+        print("          -BittiumFaros: 15s intervals derived from ECG.")
+
+        print("     -Raw: shows raw ECG data. Scaled so mean = 0 and SD = 1.")
+        print("     -Filt.: shows filtered ECG data. Scaled so mean = 0 and SD = 1.")
 
         print("\nAxis #2:")
         print("-Left column")
@@ -929,8 +962,10 @@ class DataViewer:
 
 
 test = DataViewer(anne_obj=anne, bf_obj=bf, fig_width=12, fig_height=9)
-test.by_data()
+test.plot_data()
 test.reset_plot()
 
 # TODO
 # Add raw ECG to ax1. Add description to print_desc()
+# Something is up with ANNE chest accel sample rate --> data "drifts" through collection
+# add bland-altman with ability to change data
