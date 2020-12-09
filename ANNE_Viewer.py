@@ -465,7 +465,7 @@ bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
              age=26, start_offset=bittium_offset if bittium_offset is not None else 0, end_offset=0,
              rest_hr_window=60, n_epochs_rest=30,
              epoch_len=15, load_accel=True,
-             filter_data=False, low_f=1, high_f=30, f_type="bandpass",
+             filter_data=False, low_f=.67, high_f=25, f_type="bandpass",
              load_raw=True, from_processed=False)
 
 
@@ -562,6 +562,7 @@ class DataViewer:
         self.cooked_button = None
         self.events_button = None
         self.help_button = None
+        self.reset_button = None
 
     def plot_data(self):
 
@@ -587,11 +588,11 @@ class DataViewer:
             if self.hr_data_dict["Raw"]:
                 ax1.plot(self.anne.chest_ecg["Timestamp"][::4],
                          preprocessing.scale(self.anne.chest_ecg["ecg"][::4]),
-                         color='red', label='Chest ANNE')
+                         color='red', label='ChestANNE_Raw')
             if self.hr_data_dict["Filt."]:
                 ax1.plot(self.anne.chest_ecg["Timestamp"][::4],
                          preprocessing.scale(self.anne.chest_ecg["ecg_filt"][::4]),
-                         color='red', label='Chest ANNE')
+                         color='red' if not self.hr_data_dict["Raw"] else 'black', label='ChestAnne_Filt')
 
         # ANNE Limb
         if self.hr_plot_dict["ANNE Limb"] and self.hr_data_dict["HR"]:
@@ -601,13 +602,13 @@ class DataViewer:
         # Bittium Faros
         if self.hr_plot_dict["BittiumFaros"]:
             if self.hr_data_dict["HR"]:
-                ax1.plot(self.bf.epoch_timestamps, self.bf.valid_hr, color='black', label='BittiumFaros')
+                ax1.plot(self.bf.epoch_timestamps, self.bf.valid_hr, color='black', label='BF')
             if self.hr_data_dict["Raw"]:
                 ax1.plot(self.bf.timestamps[::2], preprocessing.scale(self.bf.raw[::2]),
-                         color='black', label="BittiumFaros")
+                         color='black', label="BF_Raw")
             if self.hr_data_dict["Filt."]:
                 ax1.plot(self.bf.timestamps[::2], preprocessing.scale(self.bf.filtered[::2]),
-                         color='black', label="BittiumFaros")
+                         color='black' if not self.hr_data_dict["Raw"] else 'red', label="BF_Filt")
 
         if True in self.hr_plot_dict.values():
             ax1.legend(loc='upper left')
@@ -856,17 +857,25 @@ class DataViewer:
 
         """================================================ Buttons ==============================================="""
 
-        rax_help = plt.axes([0.84, .01 + .043, 0.15, .043])
-        self.help_button = Button(rax_help, 'Print descriptions', color='crimson')
-        self.help_button.on_clicked(self.print_desc)
-
+        """rax_help = plt.axes([0.84, .01 + .043, 0.15, .043])
         rax_reload = plt.axes([0.917, 0.005, 0.074, .042])
+        rax_events = plt.axes([0.84, 0.005, 0.074, .043])"""
+
+        rax_reload = plt.axes([0.917, 0.05, 0.074, .043])
         self.reload_button = Button(rax_reload, 'Reload', color='chartreuse')
         self.reload_button.on_clicked(self.get_values)
 
         rax_events = plt.axes([0.84, 0.005, 0.074, .043])
-        self.events_button = Button(rax_events, 'Show/Hide\nEvents', color='mediumturquoise')
+        self.events_button = Button(rax_events, 'Events', color='mediumturquoise')
         self.events_button.on_clicked(self.set_events)
+
+        rax_help = plt.axes([0.917, .005, 0.074, .043])
+        self.help_button = Button(rax_help, 'Help', color='crimson')
+        self.help_button.on_clicked(self.print_desc)
+
+        rax_reset = plt.axes([0.84, 0.05, 0.074, .043])
+        self.reset_button = Button(rax_reset, 'Reset', color='orange')
+        self.reset_button.on_clicked(self.reset_plot)
 
     def get_values(self, event):
         print("\nReloading...")
@@ -896,7 +905,7 @@ class DataViewer:
 
         self.plot_data()
 
-    def reset_plot(self):
+    def reset_plot(self, event):
 
         self.hr_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False}
         self.accel_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False,
@@ -908,6 +917,8 @@ class DataViewer:
 
         self.show_events = False
 
+        self.plot_data()
+
     @staticmethod
     def print_desc(event):
 
@@ -915,7 +926,7 @@ class DataViewer:
 
         print("\nOPERATION:")
         print("-Check off the box for all the data you wish to see. Then click the 'reload' button.")
-        print("-To show or hide the events from the ANNE validation protocol, click the 'Show/Hide Events' button.")
+        print("-To show or hide the events from the ANNE validation protocol, click the 'Events' button.")
 
         print("\nDATA DESCRIPTIONS:")
 
@@ -963,9 +974,8 @@ class DataViewer:
 
 test = DataViewer(anne_obj=anne, bf_obj=bf, fig_width=12, fig_height=9)
 test.plot_data()
-test.reset_plot()
 
 # TODO
-# Add raw ECG to ax1. Add description to print_desc()
 # Something is up with ANNE chest accel sample rate --> data "drifts" through collection
+    # Adjust sampling rates
 # add bland-altman with ability to change data
