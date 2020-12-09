@@ -170,7 +170,11 @@ class ECG:
         rr_sd = []  # window's RR SD
         r_peaks = []  # all R peak indexes
 
+        marker = len(self.raw) / 10
+
         for start_index in range(0, int(len(self.raw)), self.epoch_len * self.sample_rate):
+            if start_index % marker < self.epoch_len * self.sample_rate:
+                print("{}% complete...".format(round(start_index / len(self.raw) * 100, 0)))
 
             qc = CheckQuality(ecg_object=self, start_index=start_index, epoch_len=self.epoch_len)
 
