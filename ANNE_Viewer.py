@@ -11,6 +11,7 @@ from matplotlib.widgets import CheckButtons
 from matplotlib.widgets import Button
 from sklearn import preprocessing
 import pyedflib
+import AccelSubject
 
 xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
 
@@ -162,6 +163,16 @@ class ANNE:
                 for chn, col_name in enumerate(file.getSignalLabels()):
                     self.chest_acc[col_name] = file.readSignal(chn)
 
+                # Timestamp calculation
+                # self.chest_accz_fs = 1000 / (self.chest_acc["time(ms)"].iloc[2] - self.chest_acc["time(ms)"].iloc[1])
+
+                # Manually-calculated via spike signal
+                # self.chest_accz_fs = 412.180729
+
+                # Stated sample rate
+                self.chest_accz_fs = 416
+
+                self.chest_acc_fs = self.chest_accz_fs / 8
                 stop_time = self.chest_start_time + timedelta(seconds=file.getFileDuration())
                 self.chest_acc["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
                                                             periods=self.chest_acc.shape[0])
@@ -440,7 +451,7 @@ class ANNE:
 
     def epoch_chest_hr(self, epoch_len=15):
 
-        print("-Epoching ANNE chest data...")
+        print("-\nEpoching ANNE chest data...")
 
         hr = []
         timestamp = self.df_chest["Timestamp"][::epoch_len * 5]
@@ -462,7 +473,7 @@ class ANNE:
 
     def epoch_chest_acc(self, epoch_len=15):
 
-        print("-Epoching ANNE chest accelerometer data...")
+        print("-\nEpoching ANNE chest accelerometer data...")
 
         df = self.chest_acc.iloc[::8]
         df = df.reset_index()
@@ -488,7 +499,7 @@ class ANNE:
            If data available, crops epochs to match chest ANNE data.
         """
 
-        print("-Epoching ANNE limb data...")
+        print("-\nEpoching ANNE limb data...")
 
         if self.epoch_hr is not None:
             epoch1 = self.epoch_hr.loc[self.epoch_hr["Timestamp"] >=
@@ -634,7 +645,7 @@ class ANNE:
 
 
 def crop_data(bf_file=None, lankle_ga_file=None, rankle_ga_file=None,
-               lwrist_ga_file=None, rwrist_ga_file=None):
+              lwrist_ga_file=None, rwrist_ga_file=None):
     """Function that crops ANNE or Bittium data to align at start of collection."""
 
     # Default start indexes
@@ -694,68 +705,16 @@ def crop_data(bf_file=None, lankle_ga_file=None, rankle_ga_file=None,
     return output_dict
 
 
-# =========================================================== SET UP ==================================================
-
-# bittium_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Stingray.EDF"
-bittium_file = None
-la_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LA_Accelerometer.edf"
-lw_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LW_Accelerometer.edf"
-rw_file = None
-ra_file = None
-
-anne = ANNE(subj_id="007",
-            chest_acc_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_accl.edf",
-            chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.edf",
-            chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.edf",
-            limb_ppg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_ppg.edf",
-            limb_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_out_vital.edf",
-            log_file="C:/Users/ksweber/Desktop/ANNE_Validation_Logs.xlsx")
-anne.import_data()
-
-offset_dict = crop_data(bf_file=bittium_file, lwrist_ga_file=lw_file, rwrist_ga_file=rw_file,
-                        lankle_ga_file=la_file, rankle_ga_file=ra_file)
-
-"""
-bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
-             output_dir=None, processed_folder=None,
-             processed_file=None, ecg_downsample=1,
-             age=26,
-             start_offset=offset_dict["BittiumFaros"], end_offset=0,
-             rest_hr_window=60, n_epochs_rest=30,
-             epoch_len=15, load_accel=True,
-             filter_data=True, low_f=.67, high_f=25, f_type="bandpass",
-             load_raw=True, from_processed=False)
-"""
-
-anne.epoch_hr = anne.epoch_chest_hr(epoch_len=15)
-anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
-anne.epoch_limb = anne.epoch_limb_data(epoch_len=15)
-
-# Filters chest accelerometer data
-# anne.filter_acc_data(filter_type='bandpass', low_f=0.05, high_f=10)
-
-# Plots accel data. Able to plot just raw or raw and filtered. Able to adjust sample rate.
-# anne.plot_acc(sample_rate=25, show_filtered=True)
-
-
-# ==================================================== DATA VISUALIZATION =============================================
-
-"""Compares 15-second averaged HR between chest ANNE and Bittium Faros"""
-# epoch_hr_blandaltman()
-
-
 class DataViewer:
 
     def __init__(self, anne_obj=None, bf_obj=None,
-                 lwrist_obj=None, rwrist_obj=None, lankle_obj=None, rankle_obj=None,
+                 geneactivs_left=None, genactivs_right=None,
                  fig_width=10, fig_height=6):
 
         self.anne = anne_obj
         self.bf = bf_obj
-        self.lwrist = lwrist_obj
-        self.rwrist = rwrist_obj
-        self.lankle = lankle_obj
-        self.rankle = rankle_obj
+        self.ga_left = geneactivs_left
+        self.ga_right = genactivs_right
 
         self.fig_width = fig_width
         self.fig_height = fig_height
@@ -771,7 +730,7 @@ class DataViewer:
         self.accel_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False,
                                 "WristGA": False, "AnkleGA": False}
         self.accel_axis_dict = {"x": False, "y": False, "z": False, "SVM": False}
-        self.temp_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "WristGA": False, "AnnkleGA": False}
+        self.temp_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "WristGA": False, "AnkleGA": False}
         self.misc_plot_dict = {"ANNE Limb ppg": False, "ANNE Limb sO2": False,
                                "ANNE Chest Resp.": False, "ECG Validity": False}
         self.show_events = False
@@ -1150,6 +1109,11 @@ class DataViewer:
 
         print("\nGenerating {} plot to compare {} and {} HR...".format(plot_type, device1, device2))
 
+        if device1 not in ["ANNE Chest", "ANNE Limb", "Bittium Faros"] or \
+            device2 not in device1 not in ["ANNE Chest", "ANNE Limb", "Bittium Faros"]:
+            print("Invalid device name. Choose from 'ANNE Chest', 'ANNE Limb', 'Bittium Faros'.")
+            return None
+
         if device1 == "ANNE Chest":
             df1 = [i if not np.isnan(i) else None for i in self.anne.epoch_hr["hr_bpm"]]
         if device2 == "ANNE Chest":
@@ -1265,22 +1229,79 @@ class DataViewer:
         print("     -Bittium Faros: modified Orphanidou et al. (2015) algorithm, 15s intervals.")
 
 
-test = DataViewer(anne_obj=anne, bf_obj=None, fig_width=12, fig_height=9)
-test.plot_data()
+# =========================================================== SET UP ==================================================
+
+# bittium_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Stingray.EDF"
+bittium_file = None
+la_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LA_Accelerometer.edf"
+lw_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LW_Accelerometer.edf"
+rw_file = None
+ra_file = None
+
+anne = ANNE(subj_id="007",
+            chest_acc_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_accl.edf",
+            chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.edf",
+            chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.edf",
+            limb_ppg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_ppg.edf",
+            limb_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_out_vital.edf",
+            log_file="C:/Users/ksweber/Desktop/ANNE_Validation_Logs.xlsx")
+anne.import_data()
+
+offset_dict = crop_data(bf_file=bittium_file, lwrist_ga_file=lw_file, rwrist_ga_file=rw_file,
+                        lankle_ga_file=la_file, rankle_ga_file=ra_file)
+
+"""
+bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
+             output_dir=None, processed_folder=None,
+             processed_file=None, ecg_downsample=1,
+             age=26,
+             start_offset=offset_dict["BittiumFaros"], end_offset=0,
+             rest_hr_window=60, n_epochs_rest=30,
+             epoch_len=15, load_accel=True,
+             filter_data=True, low_f=.67, high_f=25, f_type="bandpass",
+             load_raw=True, from_processed=False)
+"""
+
+ga_left = AccelSubject.Subject(subj_id="Test_WTL_007",
+                               ankle_filepath=la_file,
+                               wrist_filepath=lw_file,
+                               load_raw=True,
+                               epoch_len=15,
+                               processed_filepath=None,
+                               from_processed=False,
+                               output_dir="C:/Users/ksweber/Desktop/OND06_Output/",
+                               write_epoched_data=False,
+                               write_intensity_data=False,
+                               overwrite_output=False)
+
+anne.epoch_hr = anne.epoch_chest_hr(epoch_len=15)
+anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
+anne.epoch_limb = anne.epoch_limb_data(epoch_len=15)
+anne.filter_acc_data(filter_type='bandpass', low_f=0.05, high_f=10)
+
+# Plots accel data. Able to plot just raw or raw and filtered. Able to adjust sample rate.
+# anne.plot_acc(sample_rate=25, show_filtered=True)
+
+test = DataViewer(anne_obj=anne, bf_obj=None, geneactivs_left=ga_left, fig_width=12, fig_height=9)
+
+# Manipulate/view all available data
+# test.plot_data()
+
+# ====================================================== TO DO ========================================================
+
 
 # TODO
 # Something is up with ANNE chest accel sample rate --> data "drifts" through collection
 # Adjust sampling rates
 # chest_acc edf will be wrong until this is done
 
-# chest_start_times if not reading in all data files from ANNE
-
-# Epoching limb ANNE data to match epochs from BF/Chest ANNE
-
-# Finish bland_altman plotting -> change variables using arguments
+# chest/limb start times if not reading in all data files from ANNE
 
 # write_limb_ppg has to scale data to fit in EDF max/min values?
 # Do units matter? I don't even know what they are
+
+# Working on GA read in
+# Add GA data to plot
 
 """
 # Checking sample rate stuff
