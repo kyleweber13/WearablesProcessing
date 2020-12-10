@@ -28,12 +28,13 @@ class ANNE:
         self.limb_ppg = None
 
         self.df_chest = None
-        self.df_chest_epoch = None
         self.df_limb = None
+
         self.df_event = None
 
         self.epoch_hr = None
         self.epoch_acc = None
+        self.epoch_limb = None
 
         self.chest_start_time = None
         self.limb_start_time = None
@@ -185,8 +186,6 @@ class ANNE:
 
                 self.chest_ecg.drop("time(ms)", axis=1)
 
-                self.filter_ecg_data(filter_type='bandpass', low_f=.67, high_f=25)
-
             if "edf" in self.chest_ecg_file or "EDF" in self.chest_ecg_file:
                 file = pyedflib.EdfReader(self.chest_ecg_file)
 
@@ -194,9 +193,13 @@ class ANNE:
                 for chn, col_name in enumerate(file.getSignalLabels()):
                     self.chest_ecg[col_name] = file.readSignal(chn)
 
+                self.chest_ecg_fs = 512
+
                 stop_time = self.chest_start_time + timedelta(seconds=file.getFileDuration())
                 self.chest_ecg["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
                                                             periods=self.chest_ecg.shape[0])
+
+            self.filter_ecg_data(filter_type="bandpass", low_f=.67, high_f=25)
 
         # =============================================== LIMB ANNE DATA ==============================================
 
@@ -444,6 +447,7 @@ class ANNE:
 
         for index in range(0, self.df_chest.shape[0], epoch_len * 5):
 
+            # Requires at least 1/3 of data points in epoch to be valid data else None
             if len([i for i in self.df_chest.iloc[index:index + epoch_len * 5]["hr_bpm"]]) >= int(epoch_len / 3):
                 hr.append(np.mean([i for i in self.df_chest.iloc[index:index + epoch_len * 5]["hr_bpm"] if
                                    i is not None]))
@@ -478,6 +482,46 @@ class ANNE:
         print("Complete.")
 
         return data
+
+    def epoch_limb_data(self, epoch_len=15):
+        """Epochs limb ANNE pulse rate and oxygen saturation data.
+           If data available, crops epochs to match chest ANNE data.
+        """
+
+        print("-Epoching ANNE limb data...")
+
+        if self.epoch_hr is not None:
+            epoch1 = self.epoch_hr.loc[self.epoch_hr["Timestamp"] >=
+                                       self.df_limb["Timestamp"].iloc[0]].iloc[0]["Timestamp"]
+        if anne.epoch_hr is None:
+            epoch1 = self.df_limb.iloc[0]["Timestamp"]
+
+        df_limb_crop = self.df_limb.loc[self.df_limb["Timestamp"] >= epoch1]
+
+        pr = []
+        spo2 = []
+        timestamp = self.df_limb["Timestamp"][::epoch_len * 5]
+
+        for index in range(0, self.df_limb.shape[0], epoch_len * 5):
+
+            # Requires at least 1/3 of data points in epoch to be valid data else None
+            if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"]]) >= int(epoch_len / 3):
+                pr.append(np.mean([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"] if
+                                   i is not None]))
+            if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"]]) < int(epoch_len / 3):
+                pr.append(None)
+
+            if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"]]) >= int(epoch_len / 3):
+                spo2.append(np.mean([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"] if
+                                     i is not None]))
+            if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"]]) < int(epoch_len / 3):
+                spo2.append(None)
+
+        df = pd.DataFrame(list(zip(timestamp, pr, spo2)), columns=["Timestamp", "pr_bpm", "spO2_perc"])
+
+        print("Complete.")
+
+        return df
 
     def write_chestvitalout_edf(self):
         """Writes chest_out_vital_file to edf"""
@@ -660,11 +704,9 @@ rw_file = None
 ra_file = None
 
 anne = ANNE(subj_id="007",
-            chest_acc_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_accl.csv",
-            # chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.csv",
+            chest_acc_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_accl.edf",
             chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.edf",
-            chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.csv",
-            # chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.edf",
+            chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.edf",
             limb_ppg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_ppg.edf",
             limb_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_out_vital.edf",
             log_file="C:/Users/ksweber/Desktop/ANNE_Validation_Logs.xlsx")
@@ -687,6 +729,7 @@ bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
 
 anne.epoch_hr = anne.epoch_chest_hr(epoch_len=15)
 anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
+anne.epoch_limb = anne.epoch_limb_data(epoch_len=15)
 
 # Filters chest accelerometer data
 # anne.filter_acc_data(filter_type='bandpass', low_f=0.05, high_f=10)
@@ -695,41 +738,7 @@ anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
 # anne.plot_acc(sample_rate=25, show_filtered=True)
 
 
-def epoch_hr_blandaltman():
-
-    means = []
-    diffs = []
-    for b, a in zip(bf.valid_hr, anne.epoch_hr["hr_bpm"]):
-        if b is not None and not np.isnan(a):
-            means.append((b+a)/2)
-            diffs.append(b-a)
-
-    loa = np.std(diffs) * 1.96
-    bias = np.mean(diffs)
-
-    fig, ax = plt.subplots(1, figsize=(12, 7))
-    ax.scatter(x=means, y=diffs, color='black', s=5)
-
-    ax.axhline(bias + loa, color='red', linestyle='dashed', label='Upper LOA ({}bpm)'.format(round(bias+loa, 1)))
-    ax.axhline(bias, color='black', linestyle='dashed', label='Bias ({}bpm)'.format(round(bias, 1)))
-    ax.axhline(bias - loa, color='red', linestyle='dashed', label='Lower LOA ({}bpm)'.format(round(bias-loa, 1)))
-
-    ax.fill_between(x=[min(means), max(means)], y1=plt.ylim()[0], y2=bias - loa, color='red', alpha=.25)
-    ax.fill_between(x=[min(means), max(means)], y1=bias + loa, y2=plt.ylim()[1], color='red', alpha=.25)
-    ax.fill_between(x=[min(means), max(means)], y1=bias - loa, y2=bias + loa, color='green', alpha=.25)
-
-    ax.set_xlabel("Mean HR")
-    ax.set_ylabel("Difference (BF - ANNE)")
-    plt.legend()
-
-    perc_same = len([i for i in diffs if (bias - loa) <= i <= (bias + loa)]) / len(diffs) * 100
-    ax.set_title("Bland-Altman Comparison ({}% agreement)".format(round(perc_same, 1)))
-
-
 # ==================================================== DATA VISUALIZATION =============================================
-
-"""Adds events to an open plot"""
-# anne.plot_events()
 
 """Compares 15-second averaged HR between chest ANNE and Bittium Faros"""
 # epoch_hr_blandaltman()
@@ -791,14 +800,13 @@ class DataViewer:
         """============================================== Heart Rate ==============================================="""
         ax1.set_title("Heart Rate/ECG Data")
 
-        ax1.set_ylim(0, 200)
         ax1.set_ylabel("bpm")
 
         if (self.hr_data_dict["Raw"] or self.hr_data_dict["Filt."]) and not self.hr_data_dict["HR"]:
             ax1.set_ylabel("Voltage (scaled)")
 
         # ANNE Chest
-        if self.hr_plot_dict["ANNE Chest"]:
+        if self.hr_plot_dict["ANNE Chest"] and self.anne.df_chest is not None:
             if self.hr_data_dict["HR"]:
                 ax1.plot(self.anne.df_chest["Timestamp"], self.anne.df_chest["hr_bpm"],
                          color='red', label='ANNE Chest')
@@ -812,12 +820,12 @@ class DataViewer:
                          color='red' if not self.hr_data_dict["Raw"] else 'black', label='ChestAnne_Filt')
 
         # ANNE Limb
-        if self.hr_plot_dict["ANNE Limb"] and self.hr_data_dict["HR"]:
+        if self.hr_plot_dict["ANNE Limb"] and self.hr_data_dict["HR"] and self.anne.df_limb is not None:
             ax1.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb["pr_bpm"],
                      color='dodgerblue', label='ANNE Limb')
 
         # Bittium Faros
-        if self.hr_plot_dict["BittiumFaros"]:
+        if self.hr_plot_dict["BittiumFaros"] and self.bf is not None:
             if self.hr_data_dict["HR"]:
                 ax1.plot(self.bf.epoch_timestamps, self.bf.valid_hr, color='black', label='BF')
             if self.hr_data_dict["Raw"]:
@@ -869,7 +877,7 @@ class DataViewer:
             pass"""
 
         # Bittium Faros
-        if self.accel_plot_dict["BittiumFaros"]:
+        if self.accel_plot_dict["BittiumFaros"] and self.bf is not None:
             if [i for i in self.accel_plot_dict.values()].count(True) > 1:
                 colors = ['black', 'black', 'black']
 
@@ -902,7 +910,7 @@ class DataViewer:
         """============================================= Temperature ==============================================="""
         ax3.set_title("Temperature Data")
         ax3.set_ylabel("Celcius")
-        ax3.set_ylim(0, 40)
+        ax3.set_ylim(-1, 40)
 
         rax3 = plt.axes([.81, .3125, .18, .16])
 
@@ -937,7 +945,7 @@ class DataViewer:
         if self.misc_plot_dict["ANNE Limb sO2"]:
             ax4.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb["spO2_perc"],
                      color='dodgerblue', label='ANNE Limb')
-            ax4.set_ylim(0, 100)
+            ax4.set_ylim(0, 105)
             ax4.set_ylabel("Percent")
 
         if self.misc_plot_dict["ANNE Chest Resp."]:
@@ -1138,6 +1146,72 @@ class DataViewer:
 
         self.plot_data()
 
+    def compare_hr_data(self, plot_type='scatter', device1="ANNE Chest", device2="Bittium Faros"):
+
+        print("\nGenerating {} plot to compare {} and {} HR...".format(plot_type, device1, device2))
+
+        if device1 == "ANNE Chest":
+            df1 = [i if not np.isnan(i) else None for i in self.anne.epoch_hr["hr_bpm"]]
+        if device2 == "ANNE Chest":
+            df2 = [i if not np.isnan(i) else None for i in self.anne.epoch_hr["hr_bpm"]]
+
+        if device1 == "ANNE Limb":
+            df1 = [i if not np.isnan(i) else None for i in self.anne.epoch_limb["pr_bpm"]]
+        if device2 == "ANNE Limb":
+            df2 = [i if not np.isnan(i) else None for i in self.anne.epoch_limb["pr_bpm"]]
+
+        if device1 == "Bittium Faros":
+            df1 = self.bf.valid_hr
+        if device2 == "Bittium Faros":
+            df2 = self.bf.valid_hr
+
+        if df1 is None or df2 is None:
+            print("-Not enough data.")
+            return None
+
+        if plot_type == "blandaltman" or plot_type == "bland-altman":
+            means = []
+            diffs = []
+            for d1, d2 in zip(df1, df2):
+                if d1 is not None and d2 is not None:
+                    means.append((d1 + d2) / 2)
+                    diffs.append(d2 - d1)
+
+            loa = np.std(diffs) * 1.96
+            bias = np.mean(diffs)
+
+            fig, ax = plt.subplots(1, figsize=(self.fig_width, self.fig_height))
+            ax.scatter(x=means, y=diffs, color='black', s=5)
+
+            ax.axhline(bias + loa, color='red', linestyle='dashed', label='Upper LOA ({}bpm)'.format(round(bias + loa, 1)))
+            ax.axhline(bias, color='black', linestyle='dashed', label='Bias ({}bpm)'.format(round(bias, 1)))
+            ax.axhline(bias - loa, color='red', linestyle='dashed', label='Lower LOA ({}bpm)'.format(round(bias - loa, 1)))
+
+            ax.fill_between(x=[min(means), max(means)], y1=plt.ylim()[0], y2=bias - loa, color='red', alpha=.25)
+            ax.fill_between(x=[min(means), max(means)], y1=bias + loa, y2=plt.ylim()[1], color='red', alpha=.25)
+            ax.fill_between(x=[min(means), max(means)], y1=bias - loa, y2=bias + loa, color='green', alpha=.25)
+
+            ax.set_xlabel("Mean HR")
+            ax.set_ylabel("Difference ({} - {})".format(device2, device1))
+            plt.legend()
+
+            perc_same = len([i for i in diffs if (bias - loa) <= i <= (bias + loa)]) / len(diffs) * 100
+            ax.set_title("Bland-Altman Comparison ({}% agreement)".format(round(perc_same, 1)))
+
+        if plot_type == "scatter":
+
+            fig, ax = plt.subplots(1, figsize=(self.fig_width, self.fig_height))
+
+            ax.scatter(df1[:min([len(df1), len(df2)])], df2[:min([len(df1), len(df2)])], color='black', s=6)
+            min_val = min(min([i for i in df1 if i is not None]), min([i for i in df2 if i is not None]))
+            max_val = max(max([i for i in df1 if i is not None]), max([i for i in df2 if i is not None]))
+
+            ax.plot(np.arange(.9*min_val, 1.1*max_val), np.arange(.9*min_val, 1.1*max_val),
+                    color='green', linestyle='dashed')
+            ax.set_xlabel(device1)
+            ax.set_ylabel(device2)
+            ax.set_title("HR Comparison: {} and {}".format(device1, device2))
+
     @staticmethod
     def print_desc(event):
 
@@ -1192,15 +1266,21 @@ class DataViewer:
 
 
 test = DataViewer(anne_obj=anne, bf_obj=None, fig_width=12, fig_height=9)
-# test.plot_data()
+test.plot_data()
 
 # TODO
 # Something is up with ANNE chest accel sample rate --> data "drifts" through collection
-    # Adjust sampling rates
-    # chest_acc edf will be wrong until this is done
-# add bland-altman with ability to change data
+# Adjust sampling rates
+# chest_acc edf will be wrong until this is done
+
 # chest_start_times if not reading in all data files from ANNE
+
+# Epoching limb ANNE data to match epochs from BF/Chest ANNE
+
+# Finish bland_altman plotting -> change variables using arguments
+
 # write_limb_ppg has to scale data to fit in EDF max/min values?
+# Do units matter? I don't even know what they are
 
 """
 # Checking sample rate stuff
