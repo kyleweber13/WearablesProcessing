@@ -10,6 +10,7 @@ import ImportEDF
 from matplotlib.widgets import CheckButtons
 from matplotlib.widgets import Button
 from sklearn import preprocessing
+import pyedflib
 
 xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
 
@@ -74,70 +75,128 @@ class ANNE:
 
             print("-Importing chest ANNE out_vital file...")
 
-            self.df_chest = pd.read_csv(self.chest_out_vital_file)
-            self.df_chest.columns = ["time_ms", "time_s", "epoch_ms", "hr_bpm", "hr_sqi", "ecg_leadon",
-                                     "ecg_valid", "rr_rpm", "apnea_s", "rr_sqi", "accx_g", "accy_g", "accz_g",
-                                     "chesttemp_c", "hr_alarm", "rr_alarm", "spo2_alarm", "chesttemp_alarm",
-                                     "limbtemp_alarm", "apnea_alarm", "exception", "chest_off", "limb_off"]
+            if "csv" in self.chest_out_vital_file or "CSV" in self.chest_out_vital_file:
 
-            # Calculates timestamp. Accounts for daylight savings time
-            unix_start = self.df_chest.iloc[0]["epoch_ms"] / 1000
+                self.df_chest = pd.read_csv(self.chest_out_vital_file)
+                self.df_chest.columns = ["time_ms", "time_s", "epoch_ms", "hr_bpm", "hr_sqi", "ecg_leadon",
+                                         "ecg_valid", "rr_rpm", "apnea_s", "rr_sqi", "accx_g", "accy_g", "accz_g",
+                                         "chesttemp_c", "hr_alarm", "rr_alarm", "spo2_alarm", "chesttemp_alarm",
+                                         "limbtemp_alarm", "apnea_alarm", "exception", "chest_off", "limb_off"]
 
-            if datetime.strptime("2020-03-08", "%Y-%m-%d").date() <= datetime.utcfromtimestamp(unix_start).date() <=\
-                    datetime.strptime("2020-11-01", "%Y-%m-%d").date():
-                self.chest_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-4 * 3600)
+                # Calculates timestamp. Accounts for daylight savings time
+                unix_start = self.df_chest.iloc[0]["epoch_ms"] / 1000
 
-            if datetime.strptime("2020-03-08", "%Y-%m-%d").date() >= datetime.utcfromtimestamp(unix_start).date() or\
-                    datetime.utcfromtimestamp(unix_start).date() >= datetime.strptime("2020-11-01", "%Y-%m-%d").date():
-                self.chest_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-5 * 3600)
+                if datetime.strptime("2020-03-08", "%Y-%m-%d").date() <= \
+                        datetime.utcfromtimestamp(unix_start).date() <= \
+                        datetime.strptime("2020-11-01", "%Y-%m-%d").date():
+                    self.chest_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-4 * 3600)
 
-            stop_time = self.chest_start_time + timedelta(seconds=self.df_chest.shape[0] / 5)
-            self.df_chest["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
-                                                       periods=self.df_chest.shape[0])
+                if datetime.strptime("2020-03-08", "%Y-%m-%d").date() >= \
+                        datetime.utcfromtimestamp(unix_start).date() \
+                        or \
+                        datetime.utcfromtimestamp(unix_start).date() >= \
+                        datetime.strptime("2020-11-01", "%Y-%m-%d").date():
+                    self.chest_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-5 * 3600)
 
-            # Converts 0's to Nones for some data
-            self.df_chest["hr_bpm"] = [i if i > 0 else None for i in self.df_chest["hr_bpm"]]
-            self.df_chest["rr_rpm"] = [i if i > 0 else None for i in self.df_chest["rr_rpm"]]
+                stop_time = self.chest_start_time + timedelta(seconds=self.df_chest.shape[0] / 5)
+                self.df_chest["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
+                                                           periods=self.df_chest.shape[0])
 
-            # Removes redundant timestamp data
-            self.df_chest.drop("time_ms", axis=1)
-            self.df_chest.drop("time_s", axis=1)
-            self.df_chest.drop("epoch_ms", axis=1)
+                # Converts 0's to Nones for some data
+                self.df_chest["hr_bpm"] = [i if i > 0 else None for i in self.df_chest["hr_bpm"]]
+                self.df_chest["rr_rpm"] = [i if i > 0 else None for i in self.df_chest["rr_rpm"]]
+
+                # Removes redundant timestamp data
+                self.df_chest.drop("time_ms", axis=1)
+                self.df_chest.drop("time_s", axis=1)
+                self.df_chest.drop("epoch_ms", axis=1)
+
+            if "edf" in self.chest_out_vital_file or "EDF" in self.chest_out_vital_file:
+                file = pyedflib.EdfReader(self.chest_out_vital_file)
+
+                self.df_chest = pd.DataFrame(columns=[i for i in file.getSignalLabels()])
+                for chn, col_name in enumerate(file.getSignalLabels()):
+                    self.df_chest[col_name] = file.readSignal(chn)
+
+                self.chest_start_time = file.getStartdatetime()
+                stop_time = self.chest_start_time + timedelta(seconds=file.getFileDuration())
+                self.df_chest["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
+                                                           periods=self.df_chest.shape[0])
+
+                self.df_chest["hr_bpm"] = [i if i > 1 else None for i in self.df_chest["hr_bpm"]]
+                self.df_chest["rr_rpm"] = [i if i > 1 else None for i in self.df_chest["rr_rpm"]]
 
         # ACCELEROMETER ----------------------------------------------------------------------------------------------
         if self.chest_acc_file is not None:
 
             print("-Importing chest ANNE accelerometer file...")
 
-            self.chest_acc = pd.read_csv(self.chest_acc_file)
+            if "csv" in self.chest_acc_file or "CSV" in self.chest_acc_file:
+                self.chest_acc = pd.read_csv(self.chest_acc_file)
 
-            # Calculates sample rate
-            self.chest_accz_fs = 1000 / (self.chest_acc["time(ms)"].iloc[1] - self.chest_acc["time(ms)"].iloc[0])
-            self.chest_acc_fs = self.chest_accz_fs / 8
+                # Calculates sample rate
 
-            # Calculates timestamps
-            stop_time = self.chest_start_time + timedelta(seconds=self.chest_acc.shape[0] / self.chest_accz_fs)
-            self.chest_acc["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
-                                                        periods=self.chest_acc.shape[0])
+                # Timestamp calculation
+                # self.chest_accz_fs = 1000 / (self.chest_acc["time(ms)"].iloc[2] - self.chest_acc["time(ms)"].iloc[1])
 
-            self.chest_acc.drop("time(ms)", axis=1)
+                # Manually-calculated via spike signal
+                # self.chest_accz_fs = 412.180729
+
+                # Stated sample rate
+                self.chest_accz_fs = 416
+
+                self.chest_acc_fs = self.chest_accz_fs / 8
+
+                # Calculates timestamps
+                stop_time = self.chest_start_time + timedelta(seconds=self.chest_acc.shape[0] / self.chest_accz_fs)
+                self.chest_acc["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
+                                                            periods=self.chest_acc.shape[0])
+
+                self.chest_acc.drop("time(ms)", axis=1)
+
+            if "edf" in self.chest_acc_file or "EDF" in self.chest_acc_file:
+                file = pyedflib.EdfReader(self.chest_acc_file)
+
+                self.chest_acc = pd.DataFrame(columns=[i for i in file.getSignalLabels()])
+                for chn, col_name in enumerate(file.getSignalLabels()):
+                    self.chest_acc[col_name] = file.readSignal(chn)
+
+                stop_time = self.chest_start_time + timedelta(seconds=file.getFileDuration())
+                self.chest_acc["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
+                                                            periods=self.chest_acc.shape[0])
 
         # ECG ---------------------------------------------------------------------------------------------------------
         if self.chest_ecg_file is not None:
 
             print("-Importing chest ANNE ECG file...")
 
-            self.chest_ecg = pd.read_csv(self.chest_ecg_file)
+            if "csv" in self.chest_ecg_file or "CSV" in self.chest_ecg_file:
 
-            # Calculates sample rate
-            self.chest_ecg_fs = 1000 / (self.chest_ecg["time(ms)"].iloc[1] - self.chest_ecg["time(ms)"].iloc[0])
+                self.chest_ecg = pd.read_csv(self.chest_ecg_file)
 
-            # Calculates timestamps
-            stop_time = self.chest_start_time + timedelta(seconds=self.chest_ecg.shape[0] / self.chest_ecg_fs)
-            self.chest_ecg["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
-                                                        periods=self.chest_ecg.shape[0])
+                # Calculates sample rate
+                # self.chest_ecg_fs = 1000 / (self.chest_ecg["time(ms)"].iloc[1] - self.chest_ecg["time(ms)"].iloc[0])
+                self.chest_ecg_fs = 512
 
-            self.chest_ecg.drop("time(ms)", axis=1)
+                # Calculates timestamps
+                stop_time = self.chest_start_time + timedelta(seconds=self.chest_ecg.shape[0] / self.chest_ecg_fs)
+                self.chest_ecg["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
+                                                            periods=self.chest_ecg.shape[0])
+
+                self.chest_ecg.drop("time(ms)", axis=1)
+
+                self.filter_ecg_data(filter_type='bandpass', low_f=.67, high_f=25)
+
+            if "edf" in self.chest_ecg_file or "EDF" in self.chest_ecg_file:
+                file = pyedflib.EdfReader(self.chest_ecg_file)
+
+                self.chest_ecg = pd.DataFrame(columns=[i for i in file.getSignalLabels()])
+                for chn, col_name in enumerate(file.getSignalLabels()):
+                    self.chest_ecg[col_name] = file.readSignal(chn)
+
+                stop_time = self.chest_start_time + timedelta(seconds=file.getFileDuration())
+                self.chest_ecg["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
+                                                            periods=self.chest_ecg.shape[0])
 
         # =============================================== LIMB ANNE DATA ==============================================
 
@@ -146,54 +205,77 @@ class ANNE:
 
             print("-Importing limb ANNE out_vital file...")
 
-            self.df_limb = pd.read_csv(self.limb_out_vital_file)
-            self.df_limb.columns = ["time_ms", "time_s", "epoch_ms", "spO2_perc", "pr_bpm", "pi_perc",
-                                    "spo2_sqi", "ppg_attach", "ppg_valid", "limb_temp", "hr_alarm", "rr_alarm",
-                                    "spo2_alarm", "chesttemp_alarm", "limbtemp_alarm", "apnea_alarm", "exception",
-                                    "chest_off", "limb_off"]
+            if "csv" in self.limb_out_vital_file or "CSV" in self.limb_out_vital_file:
 
-            # Calculates timestamps. Accounts for daylight savings time
-            unix_start = self.df_limb.iloc[0]["epoch_ms"] / 1000
+                self.df_limb = pd.read_csv(self.limb_out_vital_file)
+                self.df_limb.columns = ["time_ms", "time_s", "epoch_ms", "spO2_perc", "pr_bpm", "pi_perc",
+                                        "spo2_sqi", "ppg_attach", "ppg_valid", "limb_temp", "hr_alarm", "rr_alarm",
+                                        "spo2_alarm", "chesttemp_alarm", "limbtemp_alarm", "apnea_alarm", "exception",
+                                        "chest_off", "limb_off"]
 
-            if datetime.strptime("2020-03-08", "%Y-%m-%d").date() <= datetime.utcfromtimestamp(unix_start).date() <=\
-                    datetime.strptime("2020-11-01", "%Y-%m-%d").date():
-                self.limb_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-4 * 3600)
+                # Calculates timestamps. Accounts for daylight savings time
+                unix_start = self.df_limb.iloc[0]["epoch_ms"] / 1000
 
-            if datetime.strptime("2020-03-08", "%Y-%m-%d").date() >= datetime.utcfromtimestamp(unix_start).date() or\
-                    datetime.utcfromtimestamp(unix_start).date() >= datetime.strptime("2020-11-01", "%Y-%m-%d").date():
-                self.limb_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-5 * 3600)
+                if datetime.strptime("2020-03-08", "%Y-%m-%d").date() <= datetime.utcfromtimestamp(unix_start).date() <=\
+                        datetime.strptime("2020-11-01", "%Y-%m-%d").date():
+                    self.limb_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-4 * 3600)
+
+                if datetime.strptime("2020-03-08", "%Y-%m-%d").date() >= datetime.utcfromtimestamp(unix_start).date() or\
+                        datetime.utcfromtimestamp(unix_start).date() >= datetime.strptime("2020-11-01", "%Y-%m-%d").date():
+                    self.limb_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-5 * 3600)
+
+                # Converts 0s to Nones for some data
+                self.df_limb["pr_bpm"] = [i if i > 0 else None for i in self.df_limb["pr_bpm"]]
+                self.df_limb["spO2_perc"] = [i if i > 0 else None for i in self.df_limb["spO2_perc"]]
+
+                # Removes redundant timestamp data
+                self.df_limb.drop("time_ms", axis=1)
+                self.df_limb.drop("time_s", axis=1)
+                self.df_limb.drop("epoch_ms", axis=1)
+
+            if "edf" in self.limb_out_vital_file or "EDF" in self.limb_out_vital_file:
+                file = pyedflib.EdfReader(self.limb_out_vital_file)
+
+                self.df_limb = pd.DataFrame(columns=[i for i in file.getSignalLabels()])
+                for chn, col_name in enumerate(file.getSignalLabels()):
+                    self.df_limb[col_name] = file.readSignal(chn)
+
+                self.limb_start_time = file.getStartdatetime()
+
+                self.df_limb["pr_bpm"] = [i if i > 1 else None for i in self.df_limb["pr_bpm"]]
+                self.df_limb["spO2_perc"] = [i if i > 1 else None for i in self.df_limb["spO2_perc"]]
 
             # Calculates timestamps
             stop_time = self.limb_start_time + timedelta(seconds=self.df_limb.shape[0] / 5)
             self.df_limb["Timestamp"] = pd.date_range(start=self.limb_start_time, end=stop_time,
                                                       periods=self.df_limb.shape[0])
 
-            # Converts 0s to Nones for some data
-            self.df_limb["pr_bpm"] = [i if i > 0 else None for i in self.df_limb["pr_bpm"]]
-            self.df_limb["spO2_perc"] = [i if i > 0 else None for i in self.df_limb["spO2_perc"]]
-
-            # Removes redundant timestamp data
-            self.df_limb.drop("time_ms", axis=1)
-            self.df_limb.drop("time_s", axis=1)
-            self.df_limb.drop("epoch_ms", axis=1)
-
         # PPG ---------------------------------------------------------------------------------------------------------
         if self.limb_ppg_file is not None:
 
             print("-Importing limb ANNE PPG file...")
 
-            self.limb_ppg = pd.read_csv(self.limb_ppg_file)
+            if "csv" in self.limb_ppg_file or "CSV" in self.limb_ppg_file:
+                self.limb_ppg = pd.read_csv(self.limb_ppg_file)
 
-            # Calculates sample rate
-            self.limb_ppg_fs = 1000 / (self.limb_ppg["time(ms)"].iloc[1] - self.limb_ppg["time(ms)"].iloc[0])
+                # Calculates sample rate
+                # self.limb_ppg_fs = 1000 / (self.limb_ppg["time(ms)"].iloc[1] - self.limb_ppg["time(ms)"].iloc[0])
+                self.limb_ppg_fs = 128
+
+                self.limb_ppg.drop("time(ms)", axis=1)
+
+            if "edf" in self.limb_ppg_file or "EDF" in self.limb_ppg_file:
+                file = pyedflib.EdfReader(self.limb_ppg_file)
+
+                self.limb_ppg = pd.DataFrame(columns=[i for i in file.getSignalLabels()])
+                for chn, col_name in enumerate(file.getSignalLabels()):
+                    self.limb_ppg[col_name] = file.readSignal(chn)
 
             # Calculates timestamps
             stop_time = self.limb_start_time + timedelta(seconds=self.limb_ppg.shape[0] / self.limb_ppg_fs)
 
             self.limb_ppg["Timestamp"] = pd.date_range(start=self.limb_start_time, end=stop_time,
                                                        periods=self.limb_ppg.shape[0])
-
-            self.limb_ppg.drop("time(ms)", axis=1)
 
         t1 = datetime.now()
         proc_time = (t1 - t0).total_seconds()
@@ -214,25 +296,6 @@ class ANNE:
 
         self.chest_acc["z_filt"] = Filtering.filter_signal(data=self.chest_acc['z'], filter_type=filter_type,
                                                            low_f=low_f, high_f=high_f, sample_f=self.chest_accz_fs)
-
-    def plot_ecg(self, sample_rate, show_filtered=False):
-
-        ratio = int(self.chest_ecg_fs / sample_rate)
-        actual_fs = self.chest_ecg_fs / ratio
-
-        fig, ax = plt.subplots(1, figsize=(12, 7))
-        ax.set_title("ECG data ({} Hz)".format(round(actual_fs, 1)))
-        ax.plot(self.chest_ecg["Timestamp"][::ratio], self.chest_ecg["ecg"][::ratio],
-                color='red', label="Raw")
-
-        if show_filtered:
-            ax.plot(self.chest_ecg["Timestamp"][::ratio], self.chest_ecg["ecg_filt"][::ratio],
-                    color='black', label="Filtered")
-
-        ax.legend(loc='upper right')
-        ax.set_ylabel("Voltage")
-        ax.xaxis.set_major_formatter(xfmt)
-        plt.xticks(rotation=45, fontsize=8)
 
     def plot_acc(self, sample_rate, show_filtered=False):
 
@@ -407,7 +470,8 @@ class ANNE:
         for i in range(0, len(vm), int(epoch_len * self.chest_acc_fs)):
             svm.append(round(sum(vm[i:i + int(epoch_len * self.chest_acc_fs)]), 2))
 
-        timestamps = anne.chest_acc["Timestamp"].iloc[::8 * int(epoch_len * self.chest_acc_fs)]
+        # timestamps = anne.chest_acc["Timestamp"].iloc[::8 * int(epoch_len * self.chest_acc_fs)]
+        timestamps = df["Timestamp"][::int(epoch_len * self.chest_acc_fs)]
 
         data = pd.DataFrame(list(zip(timestamps, svm)), columns=["Timestamp", "SVM"])
 
@@ -415,68 +479,214 @@ class ANNE:
 
         return data
 
+    def write_chestvitalout_edf(self):
+        """Writes chest_out_vital_file to edf"""
 
-def crop_data(bf_file):
+        print("-Writing {} to edf format...".format(self.chest_out_vital_file))
+
+        channel_names = ["hr_bpm", "hr_sqi", "ecg_leadon", "ecg_valid", "rr_rpm", "apnea_s", "rr_sqi", "accx_g",
+                         "accy_g",
+                         "accz_g", "chesttemp_c", "hr_alarm", "rr_alarm", "spo2_alarm", "chesttemp_alarm",
+                         "limbtemp_alarm",
+                         "apnea_alarm", "exception", "chest_off", "limb_off"]
+
+        self.df_chest["hr_bpm"] = [i if not np.isnan(i) else 0 for i in self.df_chest["hr_bpm"]]
+        self.df_chest["rr_rpm"] = [i if not np.isnan(i) else 0 for i in self.df_chest["rr_rpm"]]
+
+        data = np.array(self.df_chest[channel_names]).transpose()
+        signal_headers = pyedflib.highlevel.make_signal_headers(channel_names, sample_rate=5)
+        header = pyedflib.highlevel.make_header(startdate=self.df_chest.iloc[0]["Timestamp"])
+        pyedflib.highlevel.write_edf(self.chest_out_vital_file.split(".")[0] + ".edf", data, signal_headers, header)
+
+        print("Complete. File saved to "
+              "{}".format(self.chest_out_vital_file[:-len(self.chest_out_vital_file.split("/")[-1])]))
+
+    def write_chestecg_edf(self):
+        """Writes chest_ecg_file to edf"""
+
+        print("-Writing {} to edf format...".format(self.chest_ecg_file))
+
+        channel_names = ["ecg", "lead_off"]
+
+        data = np.array(self.chest_ecg[channel_names]).transpose()
+
+        signal_headers = pyedflib.highlevel.make_signal_headers(channel_names, sample_rate=self.chest_ecg_fs)
+        header = pyedflib.highlevel.make_header(startdate=self.chest_ecg.iloc[0]["Timestamp"])
+        pyedflib.highlevel.write_edf(self.chest_ecg_file.split(".")[0] + ".edf", data, signal_headers, header)
+
+        print("Complete. File saved to "
+              "{}".format(self.chest_ecg_file[:-len(self.chest_ecg_file.split("/")[-1])]))
+
+    def write_chestacc_edf(self):
+        """Writes chest_acc_file to edf"""
+
+        print("-Writing {} to edf format...".format(self.chest_acc_file))
+
+        channel_names = ["x", "y", "z"]
+
+        data = np.array(self.chest_acc[channel_names]).transpose()
+
+        signal_headers = pyedflib.highlevel.make_signal_headers(channel_names, sample_rate=self.chest_accz_fs)
+        header = pyedflib.highlevel.make_header(startdate=self.chest_acc.iloc[0]["Timestamp"])
+        pyedflib.highlevel.write_edf(self.chest_acc_file.split(".")[0] + ".edf", data, signal_headers, header)
+
+        print("Complete. File saved to "
+              "{}".format(self.chest_acc_file[:-len(self.chest_acc_file.split("/")[-1])]))
+
+    def write_limbvitalout_edf(self):
+        """Writes limb_out_vital_file to edf"""
+
+        print("-Writing {} to edf format...".format(self.limb_out_vital_file))
+
+        channel_names = ["spO2_perc", "pr_bpm", "pi_perc", "spo2_sqi", "ppg_attach", "ppg_valid", "limb_temp",
+                         "hr_alarm", "rr_alarm", "spo2_alarm", "chesttemp_alarm", "limbtemp_alarm", "apnea_alarm",
+                         "exception", "chest_off", "limb_off"]
+
+        self.df_limb["pr_bpm"] = [i if not np.isnan(i) else 0 for i in self.df_limb["pr_bpm"]]
+        self.df_limb["spO2_perc"] = [i if not np.isnan(i) else 0 for i in self.df_limb["spO2_perc"]]
+
+        data = np.array(self.df_limb[channel_names]).transpose()
+        signal_headers = pyedflib.highlevel.make_signal_headers(channel_names, sample_rate=5)
+        header = pyedflib.highlevel.make_header(startdate=self.df_limb.iloc[0]["Timestamp"])
+        pyedflib.highlevel.write_edf(self.limb_out_vital_file.split(".")[0] + ".edf", data, signal_headers, header)
+
+        print("Complete. File saved to "
+              "{}".format(self.limb_out_vital_file[:-len(self.chest_out_vital_file.split("/")[-1])]))
+
+    def write_limbppg_edf(self):
+        """Writes limb_ppg_file to edf"""
+
+        print("-Writing {} to edf format...".format(self.limb_ppg_file))
+
+        channel_names = ["red", "ir", "detached"]
+
+        data = np.array(self.limb_ppg[channel_names]/10000).transpose()
+
+        signal_headers = pyedflib.highlevel.make_signal_headers(channel_names, sample_rate=self.limb_ppg_fs)
+        header = pyedflib.highlevel.make_header(startdate=self.limb_ppg.iloc[0]["Timestamp"])
+        pyedflib.highlevel.write_edf(edf_file=self.limb_ppg_file.split(".")[0] + ".edf",
+                                     signals=data, signal_headers=signal_headers, header=header, digital=False)
+
+        """output_file = pyedflib.EdfWriter(file_name=self.limb_ppg_file.split(".")[0] + ".edf",
+                                         n_channels=2, file_type=1)
+
+        output_file.setDigitalMaximum(edfsignal=0, digital_maximum=32767)
+        output_file.setDigitalMinimum(edfsignal=0, digital_minimum=-32767)
+        output_file.setDigitalMaximum(edfsignal=1, digital_maximum=32767)
+        output_file.setDigitalMinimum(edfsignal=1, digital_minimum=-32767)
+
+        output_file.setSamplefrequency(edfsignal=0, samplefrequency=self.limb_ppg_fs)
+        output_file.setSamplefrequency(edfsignal=1, samplefrequency=self.limb_ppg_fs)
+
+        output_file.setSignalHeaders(header)
+
+        output_file.setLabel(edfsignal=0, label=channel_names[0])
+        output_file.setLabel(edfsignal=1, label=channel_names[1])
+
+        output_file.writeDigitalSamples(data)"""
+
+        print("Complete. File saved to "
+              "{}".format(self.limb_ppg_file[:-len(self.limb_ppg_file.split("/")[-1])]))
+
+
+def crop_data(bf_file=None, lankle_ga_file=None, rankle_ga_file=None,
+               lwrist_ga_file=None, rwrist_ga_file=None):
     """Function that crops ANNE or Bittium data to align at start of collection."""
 
+    # Default start indexes
     bf_index = 0
+    ra_index = 0
+    la_index = 0
+    lw_index = 0
+    rw_index = 0
 
-    if bf_file is None or anne.df_chest is None:
-        return 0
-
+    # Gets info from all available files
     bf_start, bf_end, bf_fs, bf_dur = ImportEDF.check_file(filepath=bf_file, print_summary=False)
-    chest_start = anne.df_chest["Timestamp"].iloc[0]
-    limb_start = anne.df_limb["Timestamp"].iloc[0]
+    ra_start, ra_end, ra_fs, ra_dur = ImportEDF.check_file(filepath=rankle_ga_file, print_summary=False)
+    la_start, la_end, la_fs, la_dur = ImportEDF.check_file(filepath=lankle_ga_file, print_summary=False)
+    lw_start, lw_end, lw_fs, lw_dur = ImportEDF.check_file(filepath=lwrist_ga_file, print_summary=False)
+    rw_start, rw_end, rw_fs, rw_dur = ImportEDF.check_file(filepath=rwrist_ga_file, print_summary=False)
 
-    if bf_start < chest_start:
-        print("-Bittium data file will be cropped at start to match ANNE collection period...")
-        bf_index = (bf_start - chest_start).total_seconds() * bf_fs
-    if bf_start > chest_start:
-        print("-Cropping ANNE data to start of Bittium collection...")
-        anne_chest_ecg = int((bf_start - chest_start).total_seconds() * anne.chest_ecg_fs)
-        anne_chest_acc = int((bf_start - chest_start).total_seconds() * anne.chest_accz_fs)
-        anne_chest_vital = int((bf_start - chest_start).total_seconds() * 5)
+    try:
+        chest_start = anne.df_chest["Timestamp"].iloc[0]
+    except NameError:
+        chest_start = None
 
-        anne.chest_ecg = anne.chest_ecg.loc[anne.chest_ecg["Timestamp"] >= bf_start]
-        anne.chest_acc = anne.chest_acc.loc[anne.chest_acc["Timestamp"] >= bf_start]
+    start_times = {"BittiumFaros": bf_start, "ChestANNE": chest_start,
+                   "RAnkle": ra_start, "LAnkle": la_start,
+                   "LWrist": lw_start, "RWrist": rw_start}
 
-    return bf_index
+    # Timestamp of device that started last
+    crop_time = max([i for i in start_times.values() if i is not None])
+
+    # Individual start indexes ---------------------------------------------------------------------------------------
+    if bf_start is not None and bf_start != crop_time:
+        delta_t = (crop_time - bf_start).total_seconds()
+        bf_index = int(delta_t * bf_fs)
+
+    if ra_start is not None and ra_start != crop_time:
+        delta_t = (crop_time - ra_start).total_seconds()
+        ra_index = int(delta_t * ra_fs)
+
+    if la_start is not None and la_start != crop_time:
+        delta_t = (crop_time - la_start).total_seconds()
+        la_index = int(delta_t * la_fs)
+
+    if lw_start is not None and lw_start != crop_time:
+        delta_t = (crop_time - lw_start).total_seconds()
+        lw_index = int(delta_t * lw_fs)
+
+    if rw_start is not None and rw_start != crop_time:
+        delta_t = (crop_time - rw_start).total_seconds()
+        rw_index = int(delta_t * rw_fs)
+
+    if chest_start != crop_time:
+        anne.chest_ecg = anne.chest_ecg.loc[anne.chest_ecg["Timestamp"] >= crop_time]
+        anne.chest_acc = anne.chest_acc.loc[anne.chest_acc["Timestamp"] >= crop_time]
+
+    output_dict = {"BittiumFaros": bf_index, "RAnkle": ra_index, "LAnkle": la_index,
+                   "LWrist": lw_index, "RWrist": rw_index}
+
+    return output_dict
 
 
 # =========================================================== SET UP ==================================================
 
-bittium_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Stingray.EDF"
+# bittium_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Stingray.EDF"
+bittium_file = None
+la_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LA_Accelerometer.edf"
+lw_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LW_Accelerometer.edf"
+rw_file = None
+ra_file = None
 
 anne = ANNE(subj_id="007",
             chest_acc_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_accl.csv",
-            chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.csv",
+            # chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.csv",
+            chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.edf",
             chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.csv",
-            limb_ppg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_ppg.csv",
-            limb_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_out_vital.csv",
+            # chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.edf",
+            limb_ppg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_ppg.edf",
+            limb_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_out_vital.edf",
             log_file="C:/Users/ksweber/Desktop/ANNE_Validation_Logs.xlsx")
 anne.import_data()
 
-bittium_offset = crop_data(bf_file=bittium_file)
-bf = None
+offset_dict = crop_data(bf_file=bittium_file, lwrist_ga_file=lw_file, rwrist_ga_file=rw_file,
+                        lankle_ga_file=la_file, rankle_ga_file=ra_file)
 
+"""
 bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
              output_dir=None, processed_folder=None,
              processed_file=None, ecg_downsample=1,
-             age=26, start_offset=bittium_offset if bittium_offset is not None else 0, end_offset=0,
+             age=26,
+             start_offset=offset_dict["BittiumFaros"], end_offset=0,
              rest_hr_window=60, n_epochs_rest=30,
              epoch_len=15, load_accel=True,
-             filter_data=False, low_f=.67, high_f=25, f_type="bandpass",
+             filter_data=True, low_f=.67, high_f=25, f_type="bandpass",
              load_raw=True, from_processed=False)
-
+"""
 
 anne.epoch_hr = anne.epoch_chest_hr(epoch_len=15)
 anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
-
-# Filters ecg data
-anne.filter_ecg_data(filter_type='bandpass', low_f=.67, high_f=25)
-
-# Plots ecg data. Able to plot just raw or raw and filtered. Able to adjust sample rate.
-# anne.plot_ecg(show_filtered=True, sample_rate=125)
 
 # Filters chest accelerometer data
 # anne.filter_acc_data(filter_type='bandpass', low_f=0.05, high_f=10)
@@ -527,10 +737,16 @@ def epoch_hr_blandaltman():
 
 class DataViewer:
 
-    def __init__(self, anne_obj=None, bf_obj=None, fig_width=10, fig_height=6):
+    def __init__(self, anne_obj=None, bf_obj=None,
+                 lwrist_obj=None, rwrist_obj=None, lankle_obj=None, rankle_obj=None,
+                 fig_width=10, fig_height=6):
 
         self.anne = anne_obj
         self.bf = bf_obj
+        self.lwrist = lwrist_obj
+        self.rwrist = rwrist_obj
+        self.lankle = lankle_obj
+        self.rankle = rankle_obj
 
         self.fig_width = fig_width
         self.fig_height = fig_height
@@ -568,15 +784,16 @@ class DataViewer:
 
         plt.close("all")
         fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, sharex='col', figsize=(self.fig_width, self.fig_height))
-        plt.subplots_adjust(right=.8, hspace=.28)
+        plt.subplots_adjust(right=.8, hspace=.24)
         ax4.xaxis.set_major_formatter(xfmt)
         plt.xticks(rotation=45, fontsize=8)
 
         """============================================== Heart Rate ==============================================="""
-        ax1.set_title("Heart Rate Data")
+        ax1.set_title("Heart Rate/ECG Data")
 
-        if not self.hr_data_dict["Raw"] and not self.hr_data_dict["Filt."] and self.hr_data_dict["HR"]:
-            ax1.set_ylabel("bpm")
+        ax1.set_ylim(0, 200)
+        ax1.set_ylabel("bpm")
+
         if (self.hr_data_dict["Raw"] or self.hr_data_dict["Filt."]) and not self.hr_data_dict["HR"]:
             ax1.set_ylabel("Voltage (scaled)")
 
@@ -613,15 +830,15 @@ class DataViewer:
         if True in self.hr_plot_dict.values():
             ax1.legend(loc='upper left')
 
-        # rax1 = plt.axes([.81, .72, .18, .16])
-        rax1 = plt.axes([.81, .72, .18, .16])
-        rax1_2 = plt.axes([.935, .72, .055, .16])
+        rax1 = plt.axes([.81, .72, .115, .16])
+        rax1_2 = plt.axes([.925, .72, .065, .16])
         self.check1 = CheckButtons(rax1, ("ANNE Chest", "ANNE Limb", "BittiumFaros"),
                                    (False, False, False))
         self.check1_data = CheckButtons(rax1_2, ("HR", "Raw", "Filt."), (False, False, False))
 
         """============================================= Accelerometer ============================================="""
         ax2.set_title("Accelerometer Data")
+        ax2.set_ylabel("G")
 
         # Colors based on how much data is being plotted
         if [i for i in self.accel_plot_dict.values()].count(True) == 1:
@@ -685,6 +902,7 @@ class DataViewer:
         """============================================= Temperature ==============================================="""
         ax3.set_title("Temperature Data")
         ax3.set_ylabel("Celcius")
+        ax3.set_ylim(0, 40)
 
         rax3 = plt.axes([.81, .3125, .18, .16])
 
@@ -704,6 +922,7 @@ class DataViewer:
 
         """============================================= Miscellaneous ============================================="""
         ax4.set_title("Miscellaneous Data")
+        ax4.set_ylabel("Mysterious Units")
 
         rax4 = plt.axes([.81, .11, .18, .16])
         self.check4 = CheckButtons(rax4, ("ANNE Limb ppg", "ANNE Limb sO2", "ANNE Chest Resp.", "ECG Validity"),
@@ -857,24 +1076,24 @@ class DataViewer:
 
         """================================================ Buttons ==============================================="""
 
-        """rax_help = plt.axes([0.84, .01 + .043, 0.15, .043])
-        rax_reload = plt.axes([0.917, 0.005, 0.074, .042])
-        rax_events = plt.axes([0.84, 0.005, 0.074, .043])"""
-
-        rax_reload = plt.axes([0.917, 0.05, 0.074, .043])
-        self.reload_button = Button(rax_reload, 'Reload', color='chartreuse')
+        rax_reload = plt.axes([0.84, 0.05, 0.074, .043])
+        # self.reload_button = Button(rax_reload, 'Reload', color='chartreuse')
+        self.reload_button = Button(rax_reload, 'Reload', color='#7AC141')
         self.reload_button.on_clicked(self.get_values)
 
         rax_events = plt.axes([0.84, 0.005, 0.074, .043])
-        self.events_button = Button(rax_events, 'Events', color='mediumturquoise')
+        # self.events_button = Button(rax_events, 'Events', color='mediumturquoise')
+        self.events_button = Button(rax_events, 'Events', color='#8476B6')
         self.events_button.on_clicked(self.set_events)
 
         rax_help = plt.axes([0.917, .005, 0.074, .043])
-        self.help_button = Button(rax_help, 'Help', color='crimson')
+        # self.help_button = Button(rax_help, 'Help', color='crimson')
+        self.help_button = Button(rax_help, 'Help', color='#EF333A')
         self.help_button.on_clicked(self.print_desc)
 
-        rax_reset = plt.axes([0.84, 0.05, 0.074, .043])
-        self.reset_button = Button(rax_reset, 'Reset', color='orange')
+        rax_reset = plt.axes([0.917, 0.05, 0.074, .043])
+        # self.reset_button = Button(rax_reset, 'Reset', color='slateblue')
+        self.reset_button = Button(rax_reset, 'Reset', color='#F57E21')
         self.reset_button.on_clicked(self.reset_plot)
 
     def get_values(self, event):
@@ -972,10 +1191,27 @@ class DataViewer:
         print("     -Bittium Faros: modified Orphanidou et al. (2015) algorithm, 15s intervals.")
 
 
-test = DataViewer(anne_obj=anne, bf_obj=bf, fig_width=12, fig_height=9)
-test.plot_data()
+test = DataViewer(anne_obj=anne, bf_obj=None, fig_width=12, fig_height=9)
+# test.plot_data()
 
 # TODO
 # Something is up with ANNE chest accel sample rate --> data "drifts" through collection
     # Adjust sampling rates
+    # chest_acc edf will be wrong until this is done
 # add bland-altman with ability to change data
+# chest_start_times if not reading in all data files from ANNE
+# write_limb_ppg has to scale data to fit in EDF max/min values?
+
+"""
+# Checking sample rate stuff
+
+anne_s = [i/anne.chest_acc_fs for i in range(int(anne.chest_acc.shape[0]/8))]
+bf_s = [i/bf.accel_sample_rate for i in range(len(bf.accel_x))]
+
+plt.plot(anne_s[:len(anne.chest_acc["x"][::8])], anne.chest_acc["x"][::8][:len(anne_s)], color='red', label="ANNE")
+plt.plot(bf_s, [i*-1 for i in bf.accel_x], color='black', label="BF")
+plt.legend(loc='upper left')
+plt.title("ANNE acc_z sample rate = " + str(anne.chest_accz_fs) + "Hz")
+plt.ylabel("G")
+plt.xlabel("Seconds")
+"""
