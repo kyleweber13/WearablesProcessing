@@ -20,7 +20,7 @@ class Subject:
                  rw_filepath=None, rw_temp_filepath=None,
                  ra_filepath=None, ra_temp_filepath=None,
                  lw_start_offset=0, la_start_offset=0, rw_start_offset=0, ra_start_offset=0,
-                 crop_starts=False,
+                 crop_starts=False, dom_wrist="Right",
                  processed_filepath=None, from_processed=False,
                  load_raw=True, output_dir=None, epoch_len=15,
                  write_epoched_data=False, write_intensity_data=False, overwrite_output=False):
@@ -36,6 +36,7 @@ class Subject:
 
         -wrist_start_offset, ankle_start_offset: datapoints to skip at start of collection
         -crop_starts: boolean whether to crop files to start at the same time
+        -dom_wrist: "Right" or "Left" for hand dominance
 
         -processed_filepath: full pathway to .csv file created using Subject.create_epoch_df()
         -load_raw: whether to load raw data; boolean
@@ -49,6 +50,7 @@ class Subject:
         """
 
         self.subj_id = subj_id
+        self.dom_wrist = dom_wrist
 
         """Left wrist filename(s)"""
         if lw_filepath is not None:
@@ -125,43 +127,46 @@ class Subject:
         self.activity_totals = {"Sedentary": 0, "Light": 0, "Moderate": 0, "Vigorous": 0, "MVPA": 0}
         self.df_daily = pd.DataFrame(columns=["Date", "Sedentary", "Light", "Moderate", "Vigorous", "MVPA"])
 
+        self.la_temperature, self.ra_temperature, self.lw_temperature, self.rw_temperature = None, None, None, None
+
         # ================================================== RUNS METHODS =============================================
 
         # Prints summary of what data will be imported
         self.print_summary()
 
+        # if self.load_raw:
+        if crop_starts:
+            self.sync_starts()
+
+        # Imports and epochs wrist data
+        self.lw, self.rw, self.lw_fs, self.rw_fs, self.lw_cutpoints, self.rw_cutpoints = self.create_wrist_obj()
+
+        self.lw_svm, self.lw_avm = self.epoch_accel(acc_type="left wrist",
+                                                    fs=self.lw.sample_rate if self.lw is not None else 1,
+                                                    vm_data=self.lw.accel_vm if self.lw is not None else [])
+
+        self.rw_svm, self.rw_avm = self.epoch_accel(acc_type="right wrist",
+                                                    fs=self.rw.sample_rate if self.rw is not None else 1,
+                                                    vm_data=self.rw.accel_vm if self.rw is not None else [])
+
+        # Imports and epochs ankle data
+        self.la, self.ra, self.la_fs, self.ra_fs = self.create_ankle_obj()
+
+        self.la_svm, self.la_avm = self.epoch_accel(acc_type="left ankle",
+                                                    fs=self.la_fs if self.la is not None else 1,
+                                                    vm_data=self.la.accel_vm if self.la is not None else [])
+
+        self.ra_svm, self.ra_avm = self.epoch_accel(acc_type="right ankle",
+                                                    fs=self.ra_fs if self.ra is not None else 1,
+                                                    vm_data=self.ra.accel_vm if self.ra is not None else [])
+
         if self.load_raw:
-            if crop_starts:
-                self.sync_starts()
-
-            if self.lw_filepath is not None:
-                self.lw, self.lw_cutpoint_dict = self.create_wrist_obj(filepath=self.lw_filepath,
-                                                                       temp_filepath=self.lw_temp_filepath,
-                                                                       offset_index=self.lw_offset)
-
-                self.lw_svm, self.lw_avm = self.epoch_accel(acc_type="wrist",
-                                                            fs=self.lw.sample_rate,
-                                                            vm_data=self.lw.accel_vm)
-
-            """if self.wrist_filepath is None:
-                self.wrist = None
-                self.cutpoint_dict = None
-                self.wrist_svm = None
-                self.wrist_avm = None
-
-            if self.ankle_filepath is not None:
-                self.ankle = self.create_ankle_obj()
-                self.ankle_svm, self.ankle_avm = self.epoch_accel(acc_type="ankle",
-                                                                  fs=self.ankle.sample_rate,
-                                                                  vm_data=self.ankle.accel_vm)
-
             self.df_epoch = self.create_epoch_df(write_df=self.write_epoched)
 
-            if self.wrist_filepath is not None:
-                self.calculate_wrist_intensity()
-
         if self.from_processed:
-            self.df_epoch = self.import_processed_df()"""
+            self.df_epoch = self.import_processed_df()
+
+        self.calculate_wrist_intensity()
 
         print("\n=====================================================================================================")
         print("Processing complete.")
@@ -243,13 +248,17 @@ class Subject:
             start_dict = {"LA_start": None, "LA_fs": 1, "RA_start": None, "RA_fs": 1,
                           "LW_start": None, "LW_fs": 1, "RW_start": None, "RW_fs": 1}
 
-            start_dict["LA_start"], start_dict["LA_fs"] = self.check_file(filepath=self.la_filepath, print_summary=False)
-            start_dict["RA_start"], start_dict["RA_fs"] = self.check_file(filepath=self.ra_filepath, print_summary=False)
-            start_dict["LW_start"], start_dict["LW_fs"] = self.check_file(filepath=self.lw_filepath, print_summary=False)
-            start_dict["RW_start"], start_dict["RW_fs"] = self.check_file(filepath=self.rw_filepath, print_summary=False)
+            start_dict["LA_start"], start_dict["LA_fs"] = self.check_file(filepath=self.la_filepath,
+                                                                          print_summary=False)
+            start_dict["RA_start"], start_dict["RA_fs"] = self.check_file(filepath=self.ra_filepath,
+                                                                          print_summary=False)
+            start_dict["LW_start"], start_dict["LW_fs"] = self.check_file(filepath=self.lw_filepath,
+                                                                          print_summary=False)
+            start_dict["RW_start"], start_dict["RW_fs"] = self.check_file(filepath=self.rw_filepath,
+                                                                          print_summary=False)
 
-            last_start = max([start_dict["LA_start"], start_dict["RA_start"],
-                             start_dict["LW_start"], start_dict["RW_start"]])
+            last_start = max([i for i in [start_dict["LA_start"], start_dict["RA_start"],
+                             start_dict["LW_start"], start_dict["RW_start"]] if i is not None])
 
             if self.la_exists and start_dict["LA_start"] > last_start:
                 self.la_offset = int((last_start - start_dict["LA_start"]).total_seconds() * start_dict["LA_fs"])
@@ -273,32 +282,61 @@ class Subject:
         if self.la_exists + self.ra_exists + self.lw_exists + self.rw_exists <= 1:
             print("-Only one file input/found. No cropping will be performed.")
 
-    def create_wrist_obj(self, filepath, temp_filepath, offset_index):
+    def create_wrist_obj(self):
         """Creates wrist accelerometer data object.
            Scales accelerometer cutpoints from Powell et al. (2017) to selected epoch length.
 
         :returns
         -wrist object
-        -cutpoints: dictionary
+        -Dictionaries of Powell et al. 2017 wrist cutpoints scaled to sampling rate and epoch length
+            -nd_cutpoints, d_cutpoints
         """
 
-        print("\n--------------------------------------------- Wrist file --------------------------------------------")
-        if filepath is not None and os.path.exists(self.lw_filepath):
-            wrist = AccelerometerCondensed(raw_filepath=filepath,
-                                           temp_filepath=temp_filepath,
-                                           load_raw=self.load_raw,
-                                           start_offset=offset_index)
-            fs = wrist.sample_rate
+        if self.lw_filepath is not None and os.path.exists(self.lw_filepath):
+            print("\n--------------------------------------- Left wrist file ----------------------------------------")
+            lw = AccelerometerCondensed(raw_filepath=self.lw_filepath,
+                                        temp_filepath=self.lw_temp_filepath,
+                                        load_raw=self.load_raw,
+                                        start_offset=self.lw_offset)
+            lw_fs = lw.sample_rate
 
-        if filepath is None or not os.path.exists(filepath):
-            wrist = None
-            fs = 1
+            if self.dom_wrist == "Right":
+                lw_cutpoints = {"Light": 47 * lw_fs / 30 * self.epoch_len / 15,
+                                "Moderate": 64 * lw_fs / 30 * self.epoch_len / 15,
+                                "Vigorous": 157 * lw_fs / 30 * self.epoch_len / 15}
+            if self.dom_wrist == "Left":
+                lw_cutpoints = {"Light": 51 * lw_fs / 30 * self.epoch_len / 15,
+                                "Moderate": 68 * lw_fs / 30 * self.epoch_len / 15,
+                                "Vigorous": 142 * lw_fs / 30 * self.epoch_len / 15}
 
-        cutpoint_dict = {"Light": 47 * fs / 30 * self.epoch_len / 15,
-                         "Moderate": 64 * fs / 30 * self.epoch_len / 15,
-                         "Vigorous": 157 * fs / 30 * self.epoch_len / 15}
+        if self.lw_filepath is None or not os.path.exists(self.lw_filepath):
+            lw = None
+            lw_fs = 1
+            lw_cutpoints = {"Light": 1, "Moderate": 1, "Vigorous": 0}
 
-        return wrist, cutpoint_dict
+        if self.rw_filepath is not None and os.path.exists(self.rw_filepath):
+            print("\n--------------------------------------- Right wrist file ----------------------------------------")
+            rw = AccelerometerCondensed(raw_filepath=self.rw_filepath,
+                                        temp_filepath=self.rw_temp_filepath,
+                                        load_raw=self.load_raw,
+                                        start_offset=self.rw_offset)
+            rw_fs = rw.sample_rate
+
+            if self.dom_wrist == "Right":
+                rw_cutpoints = {"Light": 47 * rw_fs / 30 * self.epoch_len / 15,
+                                "Moderate": 64 * rw_fs / 30 * self.epoch_len / 15,
+                                "Vigorous": 157 * rw_fs / 30 * self.epoch_len / 15}
+            if self.dom_wrist == "Left":
+                rw_cutpoints = {"Light": 51 * rw_fs / 30 * self.epoch_len / 15,
+                                "Moderate": 68 * rw_fs / 30 * self.epoch_len / 15,
+                                "Vigorous": 142 * rw_fs / 30 * self.epoch_len / 15}
+
+        if self.rw_filepath is None or not os.path.exists(self.rw_filepath):
+            rw = None
+            rw_fs = 1
+            rw_cutpoints = {"Light": 1, "Moderate": 1, "Vigorous": 0}
+
+        return lw, rw, lw_fs, rw_fs, lw_cutpoints, rw_cutpoints
 
     def create_ankle_obj(self):
         """Creates ankle accelerometer data object.
@@ -307,14 +345,26 @@ class Subject:
         -ankle object
         """
 
-        print("\n--------------------------------------------- Ankle file --------------------------------------------")
+        la, ra, la_fs, ra_fs = None, None, 1, 1
 
-        ankle = AccelerometerCondensed(raw_filepath=self.ankle_filepath,
-                                       temp_filepath=self.ankle_temp_filepath,
-                                       load_raw=self.load_raw,
-                                       start_offset=self.ankle_offset)
+        if self.la_filepath is not None and os.path.exists(self.la_filepath):
+            print("\n--------------------------------------- Left ankle file ----------------------------------------")
+            la = AccelerometerCondensed(raw_filepath=self.la_filepath,
+                                        temp_filepath=self.la_temp_filepath,
+                                        load_raw=self.load_raw,
+                                        start_offset=self.la_offset)
 
-        return ankle
+            la_fs = la.sample_rate
+
+        if self.ra_filepath is not None and os.path.exists(self.ra_filepath):
+            print("\n--------------------------------------- Right ankle file ----------------------------------------")
+            ra = AccelerometerCondensed(raw_filepath=self.ra_filepath,
+                                        temp_filepath=self.ra_temp_filepath,
+                                        load_raw=self.load_raw,
+                                        start_offset=self.ra_offset)
+            ra_fs = ra.sample_rate
+
+        return la, ra, la_fs, ra_fs
 
     def epoch_accel(self, acc_type, fs, vm_data):
         """Epochs accelerometer data. Calculates sum of vector magnitudes (SVM) and average vector magnitude (AVM)
@@ -357,17 +407,51 @@ class Subject:
 
     def fill_missing_data(self):
 
-        if self.wrist_filepath is not None and self.ankle_filepath is None:
-            data_len = len(self.wrist_svm)
+        # Creates list of epoched data lengths
+        data_lens = []
 
-            self.ankle_svm = [None for i in range(data_len)]
-            self.ankle_avm = [None for i in range(data_len)]
+        if self.lw_svm is not None:
+            data_lens.append(len(self.lw_svm))
 
-        if self.wrist_filepath is None and self.ankle_filepath is not None:
-            data_len = len(self.ankle_svm)
+        if self.rw_svm is not None:
+            data_lens.append(len(self.rw_svm))
 
-            self.wrist_svm = [None for i in range(data_len)]
-            self.wrist_avm = [None for i in range(data_len)]
+        if self.la_svm is not None:
+            data_lens.append(len(self.la_svm))
+
+        if self.ra_svm is not None:
+            data_lens.append(len(self.ra_svm))
+
+        # Fills data with lists of Nones
+        data_len = max(data_lens)
+
+        if self.lw_svm is None:
+            self.lw_svm = [None for i in range(data_len)]
+            self.lw_avm = [None for i in range(data_len)]
+
+        if self.lw.temperature is None:
+            self.lw_temperature = [None for i in range(data_len)]
+
+        if self.la_svm is None:
+            self.la_svm = [None for i in range(data_len)]
+            self.la_avm = [None for i in range(data_len)]
+
+        if self.la.temperature is None:
+            self.la_temperature = [None for i in range(data_len)]
+
+        if self.rw_svm is None:
+            self.rw_svm = [None for i in range(data_len)]
+            self.rw_avm = [None for i in range(data_len)]
+
+        if self.rw.temperature is None:
+            self.rw_temperature = [None for i in range(data_len)]
+
+        if self.ra_svm is None:
+            self.ra_svm = [None for i in range(data_len)]
+            self.ra_avm = [None for i in range(data_len)]
+
+        if self.ra.temperature is None:
+            self.ra_temperature = [None for i in range(data_len)]
 
     def calculate_wrist_intensity(self):
         """Calculates activity intensity using wrist cutpoints from Powell et al. (2017). Requires 15-second epochs.
@@ -379,37 +463,75 @@ class Subject:
             print("-Requires 15-second epoch length. Reprocess data and try again.")
             return None
 
-        data = self.df_epoch["WristSVM"]
+        # LEFT WRIST -------------------------------------------------------------------------------------------------
+        lw = self.df_epoch["LW_SVM"]
 
-        intensity = []
-        for i in data:
-            if i < self.cutpoint_dict["Light"]:
-                intensity.append("Sedentary")
-            if self.cutpoint_dict["Light"] <= i < self.cutpoint_dict["Moderate"]:
-                intensity.append("Light")
-            if self.cutpoint_dict["Moderate"] <= i < self.cutpoint_dict["Vigorous"]:
-                intensity.append("Moderate")
-            if self.cutpoint_dict["Vigorous"] <= i:
-                intensity.append("Vigorous")
+        lw_intensity = []
+        for i in lw:
+            if i < self.lw_cutpoints["Light"]:
+                lw_intensity.append("Sedentary")
+            if self.lw_cutpoints["Light"] <= i < self.lw_cutpoints["Moderate"]:
+                lw_intensity.append("Light")
+            if self.lw_cutpoints["Moderate"] <= i < self.lw_cutpoints["Vigorous"]:
+                lw_intensity.append("Moderate")
+            if self.lw_cutpoints["Vigorous"] <= i:
+                lw_intensity.append("Vigorous")
 
-        self.df_epoch["WristIntensity"] = intensity
+        self.df_epoch["LW_Intensity"] = lw_intensity
 
+        # RIGHT WRIST -------------------------------------------------------------------------------------------------
+        rw = self.df_epoch["RW_SVM"]
+
+        rw_intensity = []
+        for i in rw:
+            if i < self.rw_cutpoints["Light"]:
+                rw_intensity.append("Sedentary")
+            if self.rw_cutpoints["Light"] <= i < self.rw_cutpoints["Moderate"]:
+                rw_intensity.append("Light")
+            if self.rw_cutpoints["Moderate"] <= i < self.rw_cutpoints["Vigorous"]:
+                rw_intensity.append("Moderate")
+            if self.rw_cutpoints["Vigorous"] <= i:
+                rw_intensity.append("Vigorous")
+
+        self.df_epoch["RW_Intensity"] = rw_intensity
+
+        # SUMMARY MEASURES --------------------------------------------------------------------------------------------
         epoch_to_mins = 60 / self.epoch_len
-        values = self.df_epoch["WristIntensity"].value_counts()
 
-        if "Light" not in values.keys():
-            values["Light"] = 0
-        if "Moderate" not in values.keys():
-            values["Moderate"] = 0
-        if "Vigorous" not in values.keys():
-            values["Vigorous"] = 0
+        # Left wrist
+        lw_values = self.df_epoch["LW_Intensity"].value_counts()
+
+        if "Light" not in lw_values.keys():
+            lw_values["Light"] = 0
+        if "Moderate" not in lw_values.keys():
+            lw_values["Moderate"] = 0
+        if "Vigorous" not in lw_values.keys():
+            lw_values["Vigorous"] = 0
+
+        # Right wrist
+        rw_values = self.df_epoch["RW_Intensity"].value_counts()
+
+        if "Light" not in rw_values.keys():
+            rw_values["Light"] = 0
+        if "Moderate" not in rw_values.keys():
+            rw_values["Moderate"] = 0
+        if "Vigorous" not in rw_values.keys():
+            rw_values["Vigorous"] = 0
 
         # TOTAL ACTIVITY ---------------------------------------------------------------------------------------------
-        self.activity_totals = {"Sedentary": values["Sedentary"] / epoch_to_mins,
-                                "Light": values["Light"] / epoch_to_mins,
-                                "Moderate": values["Moderate"] / epoch_to_mins,
-                                "Vigorous": values["Vigorous"] / epoch_to_mins,
-                                "MVPA": values["Moderate"] / epoch_to_mins + values["Vigorous"] / epoch_to_mins}
+        self.activity_totals = {"LW_Sedentary": lw_values["Sedentary"] / epoch_to_mins,
+                                "LW_Light": lw_values["Light"] / epoch_to_mins,
+                                "LW_Moderate": lw_values["Moderate"] / epoch_to_mins,
+                                "LW_Vigorous": lw_values["Vigorous"] / epoch_to_mins,
+                                "LW_MVPA": lw_values["Moderate"] / epoch_to_mins +
+                                           lw_values["Vigorous"] / epoch_to_mins,
+                                "RW_Sedentary": rw_values["Sedentary"] / epoch_to_mins,
+                                "RW_Light": rw_values["Light"] / epoch_to_mins,
+                                "RW_Moderate": rw_values["Moderate"] / epoch_to_mins,
+                                "RW_Vigorous": rw_values["Vigorous"] / epoch_to_mins,
+                                "RW_MVPA": rw_values["Moderate"] / epoch_to_mins +
+                                           rw_values["Vigorous"] / epoch_to_mins
+                                }
 
         # DAILY ACTIVITY ---------------------------------------------------------------------------------------------
         dates = set([i.date() for i in self.df_epoch["Timestamp"]])
@@ -419,34 +541,66 @@ class Subject:
 
         for date in sorted(dates):
             df = self.df_epoch.loc[self.df_epoch["Date"] == date]
-            values = df["WristIntensity"].value_counts()
 
-            if "Light" not in values.keys():
-                values["Light"] = 0
-            if "Moderate" not in values.keys():
-                values["Moderate"] = 0
-            if "Vigorous" not in values.keys():
-                values["Vigorous"] = 0
+            # Left wrist
+            lw_values = df["LW_Intensity"].value_counts()
 
-            values = values/4
-            daily_data = [date, values["Sedentary"], values["Light"], values["Moderate"],
-                          values["Vigorous"], values["Moderate"] + values["Vigorous"]]
+            if "Light" not in lw_values.keys():
+                lw_values["Light"] = 0
+            if "Moderate" not in lw_values.keys():
+                lw_values["Moderate"] = 0
+            if "Vigorous" not in lw_values.keys():
+                lw_values["Vigorous"] = 0
+
+            lw_values = lw_values/4
+
+            # Right wrist
+            rw_values = df["RW_Intensity"].value_counts()
+
+            if "Light" not in rw_values.keys():
+                rw_values["Light"] = 0
+            if "Moderate" not in rw_values.keys():
+                rw_values["Moderate"] = 0
+            if "Vigorous" not in rw_values.keys():
+                rw_values["Vigorous"] = 0
+
+            rw_values = rw_values/4
+
+            daily_data = [date, lw_values["Sedentary"], lw_values["Light"], lw_values["Moderate"],
+                          lw_values["Vigorous"], lw_values["Moderate"] + lw_values["Vigorous"],
+                          rw_values["Sedentary"], rw_values["Light"], rw_values["Moderate"],
+                          rw_values["Vigorous"], rw_values["Moderate"] + rw_values["Vigorous"]
+                          ]
             daily_totals.append(daily_data)
 
         self.df_daily = pd.DataFrame(daily_totals,
-                                     columns=["Date", "Sedentary", "Light", "Moderate", "Vigorous", "MVPA"])
+                                     columns=["Date",
+                                              "LW_Sedentary", "LW_Light", "LW_Moderate", "LW_Vigorous", "LW_MVPA",
+                                              "RW_Sedentary", "RW_Light", "RW_Moderate", "RW_Vigorous", "RW_MVPA"])
 
         # Adds totals as final row
-        final_row = pd.DataFrame(list(zip(["TOTAL", self.activity_totals["Sedentary"], self.activity_totals["Light"],
-                                           self.activity_totals["Moderate"], self.activity_totals["Vigorous"],
-                                           self.activity_totals["MVPA"]])),
-                                 index=["Date", "Sedentary", "Light", "Moderate", "Vigorous", "MVPA"]).transpose()
+        final_row = pd.DataFrame(list(zip(["TOTAL",
+                                           self.activity_totals["LW_Sedentary"], self.activity_totals["LW_Light"],
+                                           self.activity_totals["LW_Moderate"], self.activity_totals["LW_Vigorous"],
+                                           self.activity_totals["LW_MVPA"],
+                                           self.activity_totals["RW_Sedentary"], self.activity_totals["RW_Light"],
+                                           self.activity_totals["RW_Moderate"], self.activity_totals["RW_Vigorous"],
+                                           self.activity_totals["RW_MVPA"]
+                                           ])),
+                                 index=["Date",
+                                        "LW_Sedentary", "LW_Light", "LW_Moderate",
+                                        "LW_Vigorous", "LW_MVPA",
+                                        "RW_Sedentary", "RW_Light", "RW_Moderate",
+                                        "RW_Vigorous", "RW_MVPA"]).transpose()
+
         self.df_daily = self.df_daily.append(final_row)
         self.df_daily = self.df_daily.reset_index()
         self.df_daily = self.df_daily.drop("index", axis=1)
 
         # Removes date column
         self.df_epoch = self.df_epoch.drop("Date", axis=1)
+
+        print("Complete.")
 
         # Writing activity totals data --------------------------------------------------------------------------------
         if self.write_intensity_data:
@@ -504,19 +658,38 @@ class Subject:
 
         print("\nCombining data into single dataframe...")
 
-        if self.wrist_filepath is not None:
-            timestamps = self.wrist.timestamps[::self.epoch_len * self.wrist.sample_rate]
+        # Finds data that contains timestamps
+        timestamps = None
 
-        if self.ankle_filepath is not None and self.wrist_filepath is None:
-            timestamps = self.ankle.timestamps[::self.epoch_len * self.ankle.sample_rate]
+        if self.lw is not None:
+            timestamps = self.lw.timestamps[::self.epoch_len * self.lw_fs]
 
-        if self.ankle_filepath is None or self.wrist_filepath is None:
+        if self.rw is not None and timestamps is None:
+            timestamps = self.rw.timestamps[::self.epoch_len * self.rw_fs]
+
+        if self.la is not None and timestamps is None:
+            timestamps = self.la.timestamps[::self.epoch_len * self.la_fs]
+
+        if self.ra is not None and timestamps is None:
+            timestamps = self.ra.timestamps[::self.epoch_len * self.ra_fs]
+
+        # Creates empty lists for df creation
+        if None in [self.lw, self.rw, self.la, self.ra]:
             self.fill_missing_data()
 
-        df = pd.DataFrame(list(zip(timestamps, self.wrist_svm, self.wrist_avm, self.ankle_svm, self.ankle_avm)),
-                          columns=["Timestamp", "WristSVM", "WristAVM", "AnkleSVM", "AnkleAVM"])
+        df = pd.DataFrame(list(zip(timestamps,
+                                   self.lw_svm, self.lw_avm, self.lw_temperature,
+                                   self.rw_svm, self.rw_avm, self.rw_temperature,
+                                   self.la_svm, self.la_avm, self.la_temperature,
+                                   self.ra_svm, self.ra_avm, self.ra_temperature)),
+                          columns=["Timestamp", "LW_SVM", "LW_AVM", "LW_Temp",
+                                   "RW_SVM", "RW_AVM", "RW_Temp",
+                                   "LA_SVM", "LA_AVM", "LA_Temp",
+                                   "RA_SVM", "RA_AVM", "RA_Temp"])
 
-        del self.wrist_svm, self.wrist_avm, self.ankle_svm, self.ankle_avm
+        del self.lw_svm, self.lw_avm, self.rw_svm, self.rw_avm, self.la_svm, self.la_avm, self.ra_svm, self.ra_avm
+
+        print("Complete.")
 
         if write_df:
             write_file = False
@@ -568,26 +741,80 @@ class Subject:
         if "xlsx" in self.processed_filepath:
             df = pd.read_excel(self.processed_filepath)
 
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"])
+
         return df
 
     def plot_epoched(self, outcome_measure="SVM", show_cutpoints=False):
 
-        fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(12, 7))
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, sharex='col', figsize=(12, 7))
         plt.suptitle("{}-second epoch data".format(self.epoch_len))
+        plt.subplots_adjust(hspace=.25)
 
-        ax1.plot(self.df_epoch["Timestamp"], self.df_epoch["Wrist{}".format(outcome_measure)], color='red')
-        ax1.set_title("Wrist")
+        ax1.plot(self.df_epoch["Timestamp"], self.df_epoch["LW_{}".format(outcome_measure)], color='black')
+        ax1.set_title("Left Wrist")
+        ax1.set_ylabel("G*s/{} sec".format(self.epoch_len))
 
-        if show_cutpoints:
-            ax1.axhline(self.cutpoint_dict["Light"], color='green')
-            ax1.axhline(self.cutpoint_dict["Moderate"], color='orange')
-            ax1.axhline(self.cutpoint_dict["Vigorous"], color='red')
+        if show_cutpoints and outcome_measure == "SVM":
+            ax1.axhline(self.lw_cutpoints["Light"], color='green')
+            ax1.axhline(self.lw_cutpoints["Moderate"], color='orange')
+            ax1.axhline(self.lw_cutpoints["Vigorous"], color='red')
 
-        ax2.plot(self.df_epoch["Timestamp"], self.df_epoch["Ankle{}".format(outcome_measure)], color='dodgerblue')
-        ax2.set_title("Ankle")
+        ax2.plot(self.df_epoch["Timestamp"], self.df_epoch["RW_{}".format(outcome_measure)], color='red')
+        ax2.set_title("Right Wrist")
+        ax2.set_ylabel("G*s/{} sec".format(self.epoch_len))
 
-        ax2.xaxis.set_major_formatter(xfmt)
+        if show_cutpoints and outcome_measure == "SVM":
+            ax2.axhline(self.rw_cutpoints["Light"], color='green')
+            ax2.axhline(self.rw_cutpoints["Moderate"], color='orange')
+            ax2.axhline(self.rw_cutpoints["Vigorous"], color='red')
+
+        ax3.plot(self.df_epoch["Timestamp"], self.df_epoch["LA_{}".format(outcome_measure)], color='black')
+        ax3.set_title("Left Ankle")
+        ax3.set_ylabel("G*s/{} sec".format(self.epoch_len))
+
+        ax4.plot(self.df_epoch["Timestamp"], self.df_epoch["RA_{}".format(outcome_measure)], color='red')
+        ax4.set_title("Right Ankle")
+        ax4.set_ylabel("G*s/{} sec".format(self.epoch_len))
+
+        ax4.xaxis.set_major_formatter(xfmt)
         plt.xticks(rotation=45, fontsize=8)
+
+    def plot_daily_activity(self):
+
+        df = self.df_daily.iloc[:-1]
+
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, figsize=(12, 8), sharex='col')
+        plt.subplots_adjust(hspace=.35)
+
+        labels = df["Date"]
+        x = np.arange(len(labels))  # the label locations
+        width = 0.35  # the width of the bars
+
+        ax1.bar(x - width / 2, df["LW_Sedentary"], width, color='dodgerblue', edgecolor='black', label="LW")
+        ax1.bar(x + width / 2, df["RW_Sedentary"], width, color='red', edgecolor='black', label="RW")
+        ax1.set_ylabel("Minutes")
+        ax1.set_title("Sedentary")
+        ax1.legend()
+
+        ax2.bar(x - width / 2, df["LW_Light"], width, color='dodgerblue', edgecolor='black')
+        ax2.bar(x + width / 2, df["RW_Light"], width, color='red', edgecolor='black')
+
+        ax2.set_title("Light")
+
+        ax2.set_ylabel("Minutes")
+
+        ax3.bar(x - width / 2, df["LW_Moderate"], width, color='dodgerblue', edgecolor='black')
+        ax3.bar(x + width / 2, df["RW_Moderate"], width, color='red', edgecolor='black')
+        ax3.set_title("Moderate")
+        ax3.set_ylabel("Minutes")
+
+        ax4.bar(x - width / 2, df["LW_Vigorous"], width, color='dodgerblue', edgecolor='black', label="LW")
+        ax4.bar(x + width / 2, df["RW_Vigorous"], width, color='red', edgecolor='black', label="RW")
+        ax4.set_xticks(x)
+        ax4.set_xticklabels(labels)
+        ax4.set_title("Vigorous")
+        ax4.set_ylabel("Minutes")
 
 
 subj = "9844"
@@ -605,11 +832,15 @@ data = Subject(subj_id="OND06_SHB_{}".format(str(subj)),
                                 "Temperature/DATAFILES/OND06_SBH_{}_GNAC_TEMPERATURE_LWrist.edf".format(subj),
 
                crop_starts=True, load_raw=True, write_epoched_data=False,
-               processed_filepath=None, from_processed=False,
+               # processed_filepath="C:/Users/ksweber/Desktop/OND06_SHB_9844_EpochedAccelerometer.csv",
+               processed_filepath=None,
+               from_processed=False,
 
-               output_dir="C:/Users/ksweber/Desktop/OND06_PD_Wrists/")
+               output_dir="C:/Users/ksweber/Desktop/")
 
 
 # TODO
-# Add RWrist/dominant cutpoints (create_wrist_obj)
-# Add data to epoch df
+
+# add temp to epoched data --> jumping window average
+    # df_epoch needs updating
+# format epoch_df timestamps (round to second)
