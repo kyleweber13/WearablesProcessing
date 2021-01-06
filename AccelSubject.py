@@ -134,7 +134,6 @@ class Subject:
         # Prints summary of what data will be imported
         self.print_summary()
 
-        # if self.load_raw:
         if crop_starts:
             self.sync_starts()
 
@@ -143,22 +142,34 @@ class Subject:
 
         self.lw_svm, self.lw_avm = self.epoch_accel(acc_type="left wrist",
                                                     fs=self.lw.sample_rate if self.lw is not None else 1,
-                                                    vm_data=self.lw.accel_vm if self.lw is not None else [])
+                                                    vm_data=self.lw.accel_vm if self.lw is not None else None)
+        self.lw_temperature = self.epoch_temperature(acc_type='left wrist',
+                                                     fs=1/(300/self.lw_fs) if self.lw is not None else 1,
+                                                     temp_data=self.lw.temperature if self.lw is not None else None)
 
         self.rw_svm, self.rw_avm = self.epoch_accel(acc_type="right wrist",
                                                     fs=self.rw.sample_rate if self.rw is not None else 1,
-                                                    vm_data=self.rw.accel_vm if self.rw is not None else [])
+                                                    vm_data=self.rw.accel_vm if self.rw is not None else None)
+        self.rw_temperature = self.epoch_temperature(acc_type='right wrist',
+                                                     fs=1/(300/self.rw_fs) if self.rw is not None else 1,
+                                                     temp_data=self.rw.temperature if self.rw is not None else None)
 
         # Imports and epochs ankle data
         self.la, self.ra, self.la_fs, self.ra_fs = self.create_ankle_obj()
 
         self.la_svm, self.la_avm = self.epoch_accel(acc_type="left ankle",
                                                     fs=self.la_fs if self.la is not None else 1,
-                                                    vm_data=self.la.accel_vm if self.la is not None else [])
+                                                    vm_data=self.la.accel_vm if self.la is not None else None)
+        self.la_temperature = self.epoch_temperature(acc_type='left ankle',
+                                                     fs=1/(300/self.la_fs) if self.la is not None else 1,
+                                                     temp_data=self.la.temperature if self.la is not None else None)
 
         self.ra_svm, self.ra_avm = self.epoch_accel(acc_type="right ankle",
                                                     fs=self.ra_fs if self.ra is not None else 1,
-                                                    vm_data=self.ra.accel_vm if self.ra is not None else [])
+                                                    vm_data=self.ra.accel_vm if self.ra is not None else None)
+        self.ra_temperature = self.epoch_temperature(acc_type='right ankle',
+                                                     fs=1/(300/self.ra_fs) if self.ra is not None else 1,
+                                                     temp_data=self.ra.temperature if self.ra is not None else None)
 
         if self.load_raw:
             self.df_epoch = self.create_epoch_df(write_df=self.write_epoched)
@@ -405,6 +416,35 @@ class Subject:
 
             return svm, avm
 
+    def epoch_temperature(self, acc_type, fs, temp_data):
+
+        if not self.load_raw or self.from_processed or temp_data is None:
+            return None
+
+        if self.load_raw and not self.from_processed:
+
+            print("\nEpoching {} temperature data into {}-second epochs...".format(acc_type, self.epoch_len))
+            t0 = datetime.datetime.now()
+
+            temp = [i for i in temp_data]
+            avg_temp = []
+
+            for i in range(0, len(temp), int(fs * self.epoch_len)):
+
+                if i + self.epoch_len * fs > len(temp):
+                    break
+
+                temp_sum = sum(temp[i:i + int(self.epoch_len * fs)])
+
+                avg = temp_sum / len(temp[i:i + int(self.epoch_len * fs)])
+
+                avg_temp.append(round(avg, 2))
+
+            t1 = datetime.datetime.now()
+            print("Complete ({} seconds)".format(round((t1 - t0).total_seconds(), 1)))
+
+            return avg_temp
+
     def fill_missing_data(self):
 
         # Creates list of epoched data lengths
@@ -425,32 +465,32 @@ class Subject:
         # Fills data with lists of Nones
         data_len = max(data_lens)
 
-        if self.lw_svm is None:
+        if self.lw is None:
             self.lw_svm = [None for i in range(data_len)]
             self.lw_avm = [None for i in range(data_len)]
 
-        if self.lw.temperature is None:
+        if self.lw_temp_filepath is None:
             self.lw_temperature = [None for i in range(data_len)]
 
-        if self.la_svm is None:
+        if self.la is None:
             self.la_svm = [None for i in range(data_len)]
             self.la_avm = [None for i in range(data_len)]
 
-        if self.la.temperature is None:
+        if self.la_temp_filepath is None:
             self.la_temperature = [None for i in range(data_len)]
 
-        if self.rw_svm is None:
+        if self.rw is None:
             self.rw_svm = [None for i in range(data_len)]
             self.rw_avm = [None for i in range(data_len)]
 
-        if self.rw.temperature is None:
+        if self.rw_temp_filepath is None:
             self.rw_temperature = [None for i in range(data_len)]
 
-        if self.ra_svm is None:
+        if self.ra is None:
             self.ra_svm = [None for i in range(data_len)]
             self.ra_avm = [None for i in range(data_len)]
 
-        if self.ra.temperature is None:
+        if self.ra_temp_filepath is None:
             self.ra_temperature = [None for i in range(data_len)]
 
     def calculate_wrist_intensity(self):
@@ -674,20 +714,22 @@ class Subject:
             timestamps = self.ra.timestamps[::self.epoch_len * self.ra_fs]
 
         # Creates empty lists for df creation
-        if None in [self.lw, self.rw, self.la, self.ra]:
-            self.fill_missing_data()
+        self.fill_missing_data()
 
         df = pd.DataFrame(list(zip(timestamps,
                                    self.lw_svm, self.lw_avm, self.lw_temperature,
                                    self.rw_svm, self.rw_avm, self.rw_temperature,
                                    self.la_svm, self.la_avm, self.la_temperature,
                                    self.ra_svm, self.ra_avm, self.ra_temperature)),
-                          columns=["Timestamp", "LW_SVM", "LW_AVM", "LW_Temp",
+                          columns=["Timestamp",
+                                   "LW_SVM", "LW_AVM", "LW_Temp",
                                    "RW_SVM", "RW_AVM", "RW_Temp",
                                    "LA_SVM", "LA_AVM", "LA_Temp",
                                    "RA_SVM", "RA_AVM", "RA_Temp"])
 
-        del self.lw_svm, self.lw_avm, self.rw_svm, self.rw_avm, self.la_svm, self.la_avm, self.ra_svm, self.ra_avm
+        df["Timestamp"] = df["Timestamp"].dt.round("1s")
+
+        # del self.lw_svm, self.lw_avm, self.rw_svm, self.rw_avm, self.la_svm, self.la_avm, self.ra_svm, self.ra_avm
 
         print("Complete.")
 
@@ -742,6 +784,9 @@ class Subject:
             df = pd.read_excel(self.processed_filepath)
 
         df["Timestamp"] = pd.to_datetime(df["Timestamp"])
+
+        # Sets epoch length
+        self.epoch_len = int((df["Timestamp"].iloc[1] - df["Timestamp"].iloc[0]).total_seconds())
 
         return df
 
@@ -819,6 +864,7 @@ class Subject:
 
 subj = "9844"
 
+"""
 data = Subject(subj_id="OND06_SHB_{}".format(str(subj)),
                la_filepath="F:/OND06_SBH_{}_GNAC_ACCELEROMETER_LAnkle.edf".format(subj),
                ra_filepath="C:/Users/ksweber/Desktop/OND06_LeftoverFiles/"
@@ -832,15 +878,8 @@ data = Subject(subj_id="OND06_SHB_{}".format(str(subj)),
                                 "Temperature/DATAFILES/OND06_SBH_{}_GNAC_TEMPERATURE_LWrist.edf".format(subj),
 
                crop_starts=True, load_raw=True, write_epoched_data=False,
-               # processed_filepath="C:/Users/ksweber/Desktop/OND06_SHB_9844_EpochedAccelerometer.csv",
                processed_filepath=None,
                from_processed=False,
 
                output_dir="C:/Users/ksweber/Desktop/")
-
-
-# TODO
-
-# add temp to epoched data --> jumping window average
-    # df_epoch needs updating
-# format epoch_df timestamps (round to second)
+"""
