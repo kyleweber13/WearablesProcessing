@@ -15,6 +15,8 @@ import AccelSubject
 
 xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
 
+t0 = datetime.now()
+
 
 class ANNE:
 
@@ -139,10 +141,7 @@ class ANNE:
                 # Calculates sample rate
 
                 # Timestamp calculation
-                # self.chest_accz_fs = 1000 / (self.chest_acc["time(ms)"].iloc[2] - self.chest_acc["time(ms)"].iloc[1])
-
-                # Manually-calculated via spike signal
-                # self.chest_accz_fs = 412.180729
+                # self.chest_accz_fs = 1000 / (self.chest_acc["time(ms)"].iloc[1] - self.chest_acc["time(ms)"].iloc[0])
 
                 # Stated sample rate
                 self.chest_accz_fs = 416
@@ -152,7 +151,7 @@ class ANNE:
                 # Calculates timestamps
                 stop_time = self.chest_start_time + timedelta(seconds=self.chest_acc.shape[0] / self.chest_accz_fs)
                 self.chest_acc["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
-                                                            periods=self.chest_acc.shape[0])
+                                                            periods=self.chest_acc.shape[0] + 1)[:-1]
 
                 self.chest_acc.drop("time(ms)", axis=1)
 
@@ -166,16 +165,15 @@ class ANNE:
                 # Timestamp calculation
                 # self.chest_accz_fs = 1000 / (self.chest_acc["time(ms)"].iloc[2] - self.chest_acc["time(ms)"].iloc[1])
 
-                # Manually-calculated via spike signal
-                # self.chest_accz_fs = 412.180729
-
                 # Stated sample rate
                 self.chest_accz_fs = 416
 
                 self.chest_acc_fs = self.chest_accz_fs / 8
-                stop_time = self.chest_start_time + timedelta(seconds=file.getFileDuration())
+
+                # stop_time = self.chest_start_time + timedelta(seconds=file.getFileDuration())
+                stop_time = self.chest_start_time + timedelta(seconds=self.chest_acc.shape[0] / self.chest_accz_fs)
                 self.chest_acc["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
-                                                            periods=self.chest_acc.shape[0])
+                                                            periods=self.chest_acc.shape[0] + 1)[:-1]
 
         # ECG ---------------------------------------------------------------------------------------------------------
         if self.chest_ecg_file is not None:
@@ -193,7 +191,7 @@ class ANNE:
                 # Calculates timestamps
                 stop_time = self.chest_start_time + timedelta(seconds=self.chest_ecg.shape[0] / self.chest_ecg_fs)
                 self.chest_ecg["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
-                                                            periods=self.chest_ecg.shape[0])
+                                                            periods=self.chest_ecg.shape[0] + 1)[:-1]
 
                 self.chest_ecg.drop("time(ms)", axis=1)
 
@@ -208,7 +206,7 @@ class ANNE:
 
                 stop_time = self.chest_start_time + timedelta(seconds=file.getFileDuration())
                 self.chest_ecg["Timestamp"] = pd.date_range(start=self.chest_start_time, end=stop_time,
-                                                            periods=self.chest_ecg.shape[0])
+                                                            periods=self.chest_ecg.shape[0] + 1)[:-1]
 
             self.filter_ecg_data(filter_type="bandpass", low_f=.67, high_f=25)
 
@@ -235,7 +233,8 @@ class ANNE:
                     self.limb_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-4 * 3600)
 
                 if datetime.strptime("2020-03-08", "%Y-%m-%d").date() >= datetime.utcfromtimestamp(unix_start).date() or\
-                        datetime.utcfromtimestamp(unix_start).date() >= datetime.strptime("2020-11-01", "%Y-%m-%d").date():
+                        datetime.utcfromtimestamp(unix_start).date() >= \
+                        datetime.strptime("2020-11-01", "%Y-%m-%d").date():
                     self.limb_start_time = datetime.utcfromtimestamp(unix_start) + timedelta(seconds=-5 * 3600)
 
                 # Converts 0s to Nones for some data
@@ -262,7 +261,7 @@ class ANNE:
             # Calculates timestamps
             stop_time = self.limb_start_time + timedelta(seconds=self.df_limb.shape[0] / 5)
             self.df_limb["Timestamp"] = pd.date_range(start=self.limb_start_time, end=stop_time,
-                                                      periods=self.df_limb.shape[0])
+                                                      periods=self.df_limb.shape[0]+1)[:-1]
 
         # PPG ---------------------------------------------------------------------------------------------------------
         if self.limb_ppg_file is not None:
@@ -289,7 +288,7 @@ class ANNE:
             stop_time = self.limb_start_time + timedelta(seconds=self.limb_ppg.shape[0] / self.limb_ppg_fs)
 
             self.limb_ppg["Timestamp"] = pd.date_range(start=self.limb_start_time, end=stop_time,
-                                                       periods=self.limb_ppg.shape[0])
+                                                       periods=self.limb_ppg.shape[0]+1)[:-1]
 
         t1 = datetime.now()
         proc_time = (t1 - t0).total_seconds()
@@ -451,7 +450,7 @@ class ANNE:
 
     def epoch_chest_hr(self, epoch_len=15):
 
-        print("-\nEpoching ANNE chest data...")
+        print("\n-Epoching ANNE chest data...")
 
         hr = []
         timestamp = self.df_chest["Timestamp"][::epoch_len * 5]
@@ -473,7 +472,7 @@ class ANNE:
 
     def epoch_chest_acc(self, epoch_len=15):
 
-        print("-\nEpoching ANNE chest accelerometer data...")
+        print("\n-Epoching ANNE chest accelerometer data...")
 
         df = self.chest_acc.iloc[::8]
         df = df.reset_index()
@@ -499,40 +498,44 @@ class ANNE:
            If data available, crops epochs to match chest ANNE data.
         """
 
-        print("-\nEpoching ANNE limb data...")
+        if self.df_limb is not None:
+            print("\n-Epoching ANNE limb data...")
 
-        if self.epoch_hr is not None:
-            epoch1 = self.epoch_hr.loc[self.epoch_hr["Timestamp"] >=
-                                       self.df_limb["Timestamp"].iloc[0]].iloc[0]["Timestamp"]
-        if anne.epoch_hr is None:
-            epoch1 = self.df_limb.iloc[0]["Timestamp"]
+            if self.epoch_hr is not None:
+                epoch1 = self.epoch_hr.loc[self.epoch_hr["Timestamp"] >=
+                                           self.df_limb["Timestamp"].iloc[0]].iloc[0]["Timestamp"]
+            if self.epoch_hr is None:
+                epoch1 = self.df_limb.iloc[0]["Timestamp"]
 
-        df_limb_crop = self.df_limb.loc[self.df_limb["Timestamp"] >= epoch1]
+            df_limb_crop = self.df_limb.loc[self.df_limb["Timestamp"] >= epoch1]
 
-        pr = []
-        spo2 = []
-        timestamp = self.df_limb["Timestamp"][::epoch_len * 5]
+            pr = []
+            spo2 = []
+            timestamp = self.df_limb["Timestamp"][::epoch_len * 5]
 
-        for index in range(0, self.df_limb.shape[0], epoch_len * 5):
+            for index in range(0, self.df_limb.shape[0], epoch_len * 5):
 
-            # Requires at least 1/3 of data points in epoch to be valid data else None
-            if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"]]) >= int(epoch_len / 3):
-                pr.append(np.mean([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"] if
-                                   i is not None]))
-            if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"]]) < int(epoch_len / 3):
-                pr.append(None)
+                # Requires at least 1/3 of data points in epoch to be valid data else None
+                if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"]]) >= int(epoch_len / 3):
+                    pr.append(np.mean([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"] if
+                                       i is not None]))
+                if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["pr_bpm"]]) < int(epoch_len / 3):
+                    pr.append(None)
 
-            if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"]]) >= int(epoch_len / 3):
-                spo2.append(np.mean([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"] if
-                                     i is not None]))
-            if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"]]) < int(epoch_len / 3):
-                spo2.append(None)
+                if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"]]) >= int(epoch_len / 3):
+                    spo2.append(np.mean([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"] if
+                                         i is not None]))
+                if len([i for i in self.df_limb.iloc[index:index + epoch_len * 5]["spO2_perc"]]) < int(epoch_len / 3):
+                    spo2.append(None)
 
-        df = pd.DataFrame(list(zip(timestamp, pr, spo2)), columns=["Timestamp", "pr_bpm", "spO2_perc"])
+            df = pd.DataFrame(list(zip(timestamp, pr, spo2)), columns=["Timestamp", "pr_bpm", "spO2_perc"])
 
-        print("Complete.")
+            print("Complete.")
 
-        return df
+            return df
+
+        if self.df_limb is None:
+            return None
 
     def write_chestvitalout_edf(self):
         """Writes chest_out_vital_file to edf"""
@@ -752,7 +755,7 @@ class DataViewer:
 
         plt.close("all")
         fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, sharex='col', figsize=(self.fig_width, self.fig_height))
-        plt.subplots_adjust(right=.8, hspace=.24)
+        plt.subplots_adjust(right=.8, left=.07, hspace=.24)
         ax4.xaxis.set_major_formatter(xfmt)
         plt.xticks(rotation=45, fontsize=8)
 
@@ -852,9 +855,43 @@ class DataViewer:
             if self.accel_axis_dict["SVM"]:
                 ax2.plot(self.bf.epoch_timestamps[:len(self.bf.svm)], self.bf.svm, label="BF_SVM", color='black')
 
-        """Placeholder for Wrist GA"""
+        # Wrist GENEActiv
+        if self.accel_plot_dict["WristGA"] and self.ga_left is not None:
+            if [i for i in self.accel_plot_dict.values()].count(True) > 1:
+                colors = ['purple', 'purple', 'purple']
 
-        """Placeholder for Ankle GA"""
+            if self.accel_axis_dict["x"]:
+                ax2.plot(self.ga_left.lw.timestamps[::3], self.ga_left.lw.accel_x[::3],
+                         label="GA_LW_x", color=colors[0])
+            if self.accel_axis_dict["y"]:
+                ax2.plot(self.ga_left.lw.timestamps[::3], self.ga_left.lw.accel_y[::3],
+                         label="GA_LW_y", color=colors[1])
+            if self.accel_axis_dict["z"]:
+                ax2.plot(self.ga_left.lw.timestamps[::3], self.ga_left.lw.accel_z[::3],
+                         label="GA_LW_z", color=colors[2])
+
+            if self.accel_axis_dict["SVM"]:
+                ax2.plot(self.ga_left.df_epoch["Timestamp"], self.ga_left.df_epoch["LW_SVM"],
+                         label="GA_LW", color='purple')
+
+        # Ankle GENEActiv
+        if self.accel_plot_dict["AnkleGA"] and self.ga_left is not None:
+            if [i for i in self.accel_plot_dict.values()].count(True) > 1:
+                colors = ['limegreen', 'limegreen', 'limegreen']
+
+            if self.accel_axis_dict["x"]:
+                ax2.plot(self.ga_left.la.timestamps[::3], self.ga_left.la.accel_x[::3],
+                         label="GA_LA_x", color=colors[0])
+            if self.accel_axis_dict["y"]:
+                ax2.plot(self.ga_left.la.timestamps[::3], self.ga_left.la.accel_y[::3],
+                         label="GA_LA_y", color=colors[1])
+            if self.accel_axis_dict["z"]:
+                ax2.plot(self.ga_left.la.timestamps[::3], self.ga_left.la.accel_z[::3],
+                         label="GA_LA_z", color=colors[2])
+
+            if self.accel_axis_dict["SVM"]:
+                ax2.plot(self.ga_left.df_epoch["Timestamp"], self.ga_left.df_epoch["LA_SVM"],
+                         label="GA_LA", color='limegreen')
 
         if True in self.accel_plot_dict.values():
             ax2.legend(loc='upper left')
@@ -883,6 +920,14 @@ class DataViewer:
         if self.temp_plot_dict["ANNE Limb"]:
             ax3.plot(self.anne.df_limb["Timestamp"], self.anne.df_limb["limb_temp"],
                      color='dodgerblue', label="Limb ANNE")
+
+        if self.temp_plot_dict["WristGA"]:
+            ax3.plot(self.ga_left.lw.temp_timestamps, self.ga_left.lw.temperature,
+                     color='purple', label="GA_LW")
+
+        if self.temp_plot_dict["AnkleGA"]:
+            ax3.plot(self.ga_left.la.temp_timestamps, self.ga_left.la.temperature,
+                     color='limegreen', label="GA_LA")
 
         if True in self.temp_plot_dict.values():
             ax3.legend(loc='upper left')
@@ -1097,7 +1142,7 @@ class DataViewer:
         self.accel_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "BittiumFaros": False,
                                 "WristGA": False, "AnkleGA": False}
         self.accel_axis_dict = {"x": False, "y": False, "z": False, "SVM": False}
-        self.temp_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "WristGA": False, "AnnkleGA": False}
+        self.temp_plot_dict = {"ANNE Chest": False, "ANNE Limb": False, "WristGA": False, "AnkleGA": False}
         self.misc_plot_dict = {"ANNE Limb ppg": False, "ANNE Limb sO2": False,
                                "ANNE Chest Resp.": False, "ECG Validity": False}
 
@@ -1197,17 +1242,16 @@ class DataViewer:
         print("          -ANNE Chest: 200ms intervals derived from ECG.")
         print("          -ANNE Limb: 200ms intervals derived from PPG.")
         print("          -BittiumFaros: 15s intervals derived from ECG.")
-
         print("     -Raw: shows raw ECG data. Scaled so mean = 0 and SD = 1.")
         print("     -Filt.: shows filtered ECG data. Scaled so mean = 0 and SD = 1.")
 
         print("\nAxis #2:")
         print("-Left column")
-        print("     -ANNE Chest: raw accelerometer data from chest ANNE. Downsampled by a factor of 2.")
+        print("     -ANNE Chest: accelerometer data from chest ANNE. Downsampled by a factor of 2.")
         print("     -ANNE Limb: temporary placeholder until we figure out where this data is...")
-        print("     -BittiumFaros: raw accelerometer data from Bittium Faros. 25Hz.")
-        print("     -WristGA: temporary placeholder.")
-        print("     -AnkleGA: temporary placeholder.")
+        print("     -BittiumFaros: accelerometer data from Bittium Faros. 25Hz.")
+        print("     -WristGA: acceleration data from left wrist GENEActiv. 75Hz.")
+        print("     -AnkleGA: acceleration data from left ankle GENEActiv. 75Hz.")
         print("-Right column:")
         print("     -x/y/z: which axis/axes to plot.")
         print("          -If viewing multiple devices, it looks stupid if you pick multiple axes.")
@@ -1217,8 +1261,8 @@ class DataViewer:
         print("\nAxis #3:")
         print("-ANNE Chest: temperature data in 200ms intervals from chest ANNE.")
         print("-ANNE Limb: temperature data in 200ms intervals from limb ANNE.")
-        print("-WristGA: temporary placeholder.")
-        print("-AnkleGA: temporary placeholder.")
+        print("-WristGA: temperature data in 4s intervals from left wrist GENEActiv.")
+        print("-AnkleGA: temperature data in 4s intervals from left ankle GENEActiv.")
 
         print("\nAxis #4:")
         print("-ANNE Limb ppg: both light frequencies (red, ir) from ANNE limb PPG. Downsampled by a factor of 2.")
@@ -1234,17 +1278,28 @@ class DataViewer:
 # bittium_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Stingray.EDF"
 bittium_file = None
 la_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LA_Accelerometer.edf"
+la_file_temp = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LA_Temperature.edf"
 lw_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LW_Accelerometer.edf"
+lw_temp_file = "C:/Users/ksweber/Desktop/007_ANNEValidation/007_Test_GENEActiv_LW_Temperature.edf"
+#la_file = "C:/Users/ksweber/Desktop/264_ANNE_12_20_09/264_GA_LAnkle_Accelerometer.edf"
+#la_file_temp = "C:/Users/ksweber/Desktop/264_ANNE_12_20_09/264_GA_LAnkle_Temperature.edf"
+#lw_file = "C:/Users/ksweber/Desktop/264_ANNE_12_20_09/264_GA_LWrist_Accelerometer.edf"
+#lw_temp_file = "C:/Users/ksweber/Desktop/264_ANNE_12_20_09/264_GA_LWrist_Temperature.edf"
 rw_file = None
 ra_file = None
 
 anne = ANNE(subj_id="007",
-            chest_acc_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_accl.edf",
-            chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.edf",
+            chest_acc_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_accl.csv",
+            chest_ecg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_ecg.csv",
             chest_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/ChestC1515_out_vital.edf",
             limb_ppg_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_ppg.edf",
             limb_out_vital_file="C:/Users/ksweber/Desktop/007_ANNEValidation/Limb1307_out_vital.edf",
+            # chest_acc_file="C:/Users/ksweber/Desktop/264_ANNE_12_20_09/accl.csv",
+            # chest_ecg_file="C:/Users/ksweber/Desktop/264_ANNE_12_20_09/ecg.csv",
+            # chest_out_vital_file="C:/Users/ksweber/Desktop/264_ANNE_12_20_09/out_vital.csv",
             log_file="C:/Users/ksweber/Desktop/ANNE_Validation_Logs.xlsx")
+
+
 anne.import_data()
 
 offset_dict = crop_data(bf_file=bittium_file, lwrist_ga_file=lw_file, rwrist_ga_file=rw_file,
@@ -1262,9 +1317,11 @@ bf = ECG.ECG(subject_id=anne.subj_id, filepath=bittium_file,
              load_raw=True, from_processed=False)
 """
 
-ga_left = AccelSubject.Subject(subj_id="Test_WTL_007",
-                               ankle_filepath=la_file,
-                               wrist_filepath=lw_file,
+ga_left = AccelSubject.Subject(subj_id="007",
+                               la_filepath=la_file, la_temp_filepath=la_file_temp,
+                               lw_filepath=lw_file, lw_temp_filepath=lw_temp_file,
+                               lw_start_offset=offset_dict["LWrist"], la_start_offset=offset_dict["LAnkle"],
+                               crop_starts=False,
                                load_raw=True,
                                epoch_len=15,
                                processed_filepath=None,
@@ -1274,6 +1331,7 @@ ga_left = AccelSubject.Subject(subj_id="Test_WTL_007",
                                write_intensity_data=False,
                                overwrite_output=False)
 
+
 anne.epoch_hr = anne.epoch_chest_hr(epoch_len=15)
 anne.epoch_acc = anne.epoch_chest_acc(epoch_len=15)
 anne.epoch_limb = anne.epoch_limb_data(epoch_len=15)
@@ -1282,10 +1340,14 @@ anne.filter_acc_data(filter_type='bandpass', low_f=0.05, high_f=10)
 # Plots accel data. Able to plot just raw or raw and filtered. Able to adjust sample rate.
 # anne.plot_acc(sample_rate=25, show_filtered=True)
 
-test = DataViewer(anne_obj=anne, bf_obj=None, geneactivs_left=ga_left, fig_width=12, fig_height=9)
+t1 = datetime.now()
+print("\nTotal processing time = {} seconds.".format(round((t1-t0).total_seconds(), 1)))
+
+# ga_left = None
+alldata = DataViewer(anne_obj=anne, bf_obj=None, geneactivs_left=ga_left, fig_width=12, fig_height=9)
 
 # Manipulate/view all available data
-# test.plot_data()
+alldata.plot_data()
 
 # ====================================================== TO DO ========================================================
 
@@ -1300,8 +1362,7 @@ test = DataViewer(anne_obj=anne, bf_obj=None, geneactivs_left=ga_left, fig_width
 # write_limb_ppg has to scale data to fit in EDF max/min values?
 # Do units matter? I don't even know what they are
 
-# Working on GA read in
-# Add GA data to plot
+# GENEActiv epoching
 
 """
 # Checking sample rate stuff
@@ -1315,4 +1376,25 @@ plt.legend(loc='upper left')
 plt.title("ANNE acc_z sample rate = " + str(anne.chest_accz_fs) + "Hz")
 plt.ylabel("G")
 plt.xlabel("Seconds")
+"""
+
+"""
+xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S.%f")
+
+anne.chest_accz_fs = 412.38
+
+stop_time = anne.chest_start_time + timedelta(seconds=anne.chest_acc.shape[0] / anne.chest_accz_fs)
+anne.chest_acc["Timestamp"] = pd.date_range(start=anne.chest_start_time, end=stop_time,
+                                            periods=anne.chest_acc.shape[0])
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(12, 8))
+ax1.plot(anne.chest_acc["Timestamp"][::8], anne.chest_acc["y"][::8], color='red')
+ax2.plot(ga_left.wrist.timestamps[::3], ga_left.wrist.accel_y[::3], color='black')
+ax3.plot(ga_left.ankle.timestamps[::3], ga_left.ankle.accel_y[::3], color='black')
+ax1.axvline(x=datetime(2020, 10, 8, 0, 18, 12, 406500), linestyle='dashed', color='black')
+ax2.axvline(x=datetime(2020, 10, 8, 0, 18, 12, 406500), linestyle='dashed', color='red')
+ax3.axvline(x=datetime(2020, 10, 8, 0, 18, 12, 406500), linestyle='dashed', color='red')
+
+ax3.xaxis.set_major_formatter(xfmt)
+plt.xticks(rotation=45, fontsize=8)
 """
