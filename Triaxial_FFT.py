@@ -1,5 +1,6 @@
 import datetime
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from datetime import timedelta
 import pandas as pd
 import numpy as np
@@ -53,37 +54,41 @@ def run_fft(timestamps=None, acc_x=None, acc_y=None, acc_z=None, acc_vm=None,
     xf = np.linspace(0.0, 1.0 / (2.0 * (1 / sample_rate)), data_len // 2)
 
     fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, figsize=(11, 8))
-    plt.subplots_adjust(hspace=.3)
+    xfmt = mdates.DateFormatter("%H:%M:%S")
+
+    plt.subplots_adjust(hspace=.488, bottom=.074, top=.97)
     ax1.set_title("FFT from {} to {}".format(start, start + timedelta(seconds=duration_seconds)))
 
     if plot_raw:
         if acc_x is not None:
-            ax1.plot(timestamps[start_index:stop_index:downsample], acc_x[start_index:stop_index:downsample],
+            ax5.plot(timestamps[start_index:stop_index:downsample], acc_x[start_index:stop_index:downsample],
                      color='black', label="X")
         if acc_y is not None:
-            ax1.plot(timestamps[start_index:stop_index:downsample], acc_y[start_index:stop_index:downsample],
+            ax5.plot(timestamps[start_index:stop_index:downsample], acc_y[start_index:stop_index:downsample],
                      color='red', label="Y")
         if acc_z is not None:
-            ax1.plot(timestamps[start_index:stop_index:downsample], acc_z[start_index:stop_index:downsample],
+            ax5.plot(timestamps[start_index:stop_index:downsample], acc_z[start_index:stop_index:downsample],
                      color='dodgerblue', label="Z")
-        ax1.set_ylabel("G")
+        ax5.set_ylabel("G")
+        ax5.xaxis.set_major_formatter(xfmt)
+        plt.xticks(fontsize=8)
+        ax5.legend()
 
     if acc_x is not None:
-        ax2.plot(xf, 2.0 / data_len / 2 * np.abs(fft_x[0:data_len // 2]), color='black', label="FFT_x")
+        ax1.plot(xf, 2.0 / data_len / 2 * np.abs(fft_x[0:data_len // 2]), color='black', label="FFT_x")
+        ax1.legend()
     if acc_y is not None:
-        ax3.plot(xf, 2.0 / data_len / 2 * np.abs(fft_y[0:data_len // 2]), color='red', label="FFT_y")
+        ax2.plot(xf, 2.0 / data_len / 2 * np.abs(fft_y[0:data_len // 2]), color='red', label="FFT_y")
+        ax2.legend()
     if acc_z is not None:
-        ax4.plot(xf, 2.0 / data_len / 2 * np.abs(fft_z[0:data_len // 2]), color='dodgerblue', label="FFT_z")
+        ax3.plot(xf, 2.0 / data_len / 2 * np.abs(fft_z[0:data_len // 2]), color='dodgerblue', label="FFT_z")
+        ax3.legend()
     if acc_vm is not None:
-        ax5.plot(xf, 2.0 / data_len / 2 * np.abs(fft_vm[0:data_len // 2]), color='magenta', label="FFT_VM")
+        ax4.plot(xf, 2.0 / data_len / 2 * np.abs(fft_vm[0:data_len // 2]), color='magenta', label="FFT_VM")
+        ax4.legend()
 
-    ax2.fill_between(x=[3, 7], y1=0, y2=ax2.get_ylim()[1], color='green', alpha=.5)
-    ax3.fill_between(x=[3, 7], y1=0, y2=ax3.get_ylim()[1], color='green', alpha=.5)
-    ax4.fill_between(x=[3, 7], y1=0, y2=ax4.get_ylim()[1], color='green', alpha=.5)
-    ax5.fill_between(x=[3, 7], y1=0, y2=ax5.get_ylim()[1], color='green', alpha=.5)
-
+    ax1.set_ylabel("Power")
     ax2.set_ylabel("Power")
     ax3.set_ylabel("Power")
     ax4.set_ylabel("Power")
-    ax5.set_ylabel("Power")
-    ax5.set_xlabel("Frequency (Hz)")
+    ax4.set_xlabel("Frequency (Hz)")
