@@ -18,7 +18,7 @@ class Sleep:
     def __init__(self, subject_object):
 
         print()
-        print("=========================================== SLEEP LOG DATA ===========================================")
+        print("========================================= SLEEP LOG DATA ===========================================")
 
         self.file_loc = subject_object.sleeplog_file
         self.subject_object = subject_object
@@ -72,7 +72,13 @@ class Sleep:
             if "xlsx" in self.file_loc:
                 sleep_log = pd.read_excel(self.file_loc)
 
-            subj_log = sleep_log.loc[sleep_log["SUBJECT"] == self.subject_object.wrist.filename.split("_0")[0]]
+            try:
+                subj_log = sleep_log.loc[sleep_log["SUBJECT"] == self.subject_object.wrist.filename.split("_0")[0]]
+            except AttributeError:
+                try:
+                    subj_log = sleep_log.loc[sleep_log["SUBJECT"] == self.subject_object.ankle.filename.split("_0")[0]]
+                except AttributeError:
+                    subj_log = sleep_log.loc[sleep_log["SUBJECT"] == self.subject_object.ecg.filename.split("_0")[0]]
 
             return subj_log
 
@@ -105,7 +111,8 @@ class Sleep:
                         datestamp += timedelta(days=1)
 
                     # Epoch index relative to start of collection
-                    epoch_index = (datestamp - self.subject_object.start_timestamp).total_seconds() / self.subject_object.epoch_len
+                    epoch_index = (datestamp - self.subject_object.start_timestamp).total_seconds() / \
+                                  self.subject_object.epoch_len
 
                 except ValueError:
                     datestamp = "N/A"

@@ -13,7 +13,6 @@ class NonwearLog:
         self.subject_object = subject_object
         self.subject_id = subject_object.subject_id
         self.epoch_timestamps = None
-        self.data_len = 0
 
         self.file_loc = subject_object.nonwear_file
         self.status = []
@@ -28,7 +27,6 @@ class NonwearLog:
     def prep_data(self):
 
         # Sets epoched timestamps based on available data
-        # Also sets data_len to that data's length
         if self.subject_object.load_wrist:
             try:
                 self.epoch_timestamps = self.subject_object.wrist.epoch.timestamps
@@ -36,14 +34,11 @@ class NonwearLog:
                 self.epoch_timestamps = self.subject_object.ankle.epoch.timestamps
 
         try:
-            self.data_len = len(self.subject_object.ankle.epoch.timestamps)
             self.epoch_timestamps = self.subject_object.ankle.epoch.timestamps
         except AttributeError:
             try:
-                self.data_len = len(self.subject_object.wrist.epoch.timestamps)
                 self.epoch_timestamps = self.subject_object.wrist.epoch.timestamps
             except AttributeError:
-                self.data_len = len(self.subject_object.ecg.epoch_timestamps)
                 self.epoch_timestamps = self.subject_object.ecg.epoch_timestamps
 
     def import_nonwearlog(self):
@@ -73,19 +68,29 @@ class NonwearLog:
                 [self.nonwear_log.iloc[i]["PERIOD DURATION"].total_seconds()/60
                  for i in range(self.nonwear_log.shape[0])]
 
+            # re-does column names
+            self.nonwear_log.columns = ["ID", "DEVICEOFF", "DEVICEON", "ENDCOLLECION",
+                                        "PERIODDURATION", "PERIODDURATIONMINS"]
+
             self.nonwear_dict["Average Duration (Mins)"] = round(self.nonwear_log.describe()
-                                                                 ["PERIOD DURATION"]['mean'].total_seconds() / 60, 1)
+                                                                 ["PERIODDURATION"]['mean'].total_seconds() / 60, 1)
 
             self.nonwear_dict["Number of Removals"] = self.nonwear_log.shape[0]
 
             print("\nNon-wear log data imported. Found {} removals.".format(self.nonwear_log.shape[0]))
 
-        if self.file_loc is None or not os.path.exists(self.file_loc):
+        """if self.file_loc is None or not os.path.exists(self.file_loc):
+            
+            self.status = np.zeros(self.subject_object.data_len)  # Pretends participant did not remove device
 
-            self.status = np.zeros(self.data_len)  # Pretends participant did not remove device
+            if self.file_loc is not None:
+                if not os.path.exists(self.file_loc):
+                    print("Non-wear log filepath given was not valid.")"""
 
-            if not os.path.exists(self.file_loc):
-                print("Non-wear log filepath given was not valid.")
+        if self.file_loc is None or (self.file_loc is not None and not os.path.exists(self.file_loc)):
+            self.status = np.zeros(self.subject_object.data_len)  # Pretends participant did not remove device
+        if self.file_loc is not None and not os.path.exists(self.file_loc):
+            print("Non-wear log filepath is not valid.")
 
     def mark_nonwear_epochs(self):
         """Creates a list of len(epoch_timestamps) where worn is coded as 0 and non-wear coded as 1"""
@@ -97,11 +102,11 @@ class NonwearLog:
         print("\nMarking non-wear epochs...")
 
         # Puts pd.df data into list --> mucho faster
-        off_stamps = [i for i in self.nonwear_log["DEVICE OFF"]]
-        on_stamps = [i for i in self.nonwear_log["DEVICE ON"]]
+        off_stamps = [i for i in self.nonwear_log["DEVICEOFF"]]
+        on_stamps = [i for i in self.nonwear_log["DEVICEON"]]
 
         # Creates list of 0s corresponding to each epoch
-        epoch_list = np.zeros(self.data_len)
+        epoch_list = np.zeros(self.subject_object.data_len)
 
         for i, epoch_stamp in enumerate(self.epoch_timestamps):
             for off, on in zip(off_stamps, on_stamps):

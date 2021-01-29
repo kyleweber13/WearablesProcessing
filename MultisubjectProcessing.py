@@ -64,5 +64,3 @@ def loop_subjects_standalone(subj_list):
 
         except:
             pass
-
-

@@ -451,8 +451,8 @@ class Data:
 
 x = Data(subj_id=2891, location="LA", file_folder="/Users/kyleweber/Desktop/Temp Folder/",
          log_file="/Users/kyleweber/Desktop/ReMiNDDNonWearReformatted_vt_25AUG2020.csv", study_code="OND06")
-# x.import_data()  # Imports one full file
-# x.plot_data()  # Plots one full file with all NW marked
+# x.import_data()
+# x.plot_data()
 
 # x.df_all, x.df_all_temp = x.import_all_accels(timestamp=None, duration=60)
 # x.plot_all()
