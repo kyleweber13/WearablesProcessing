@@ -1094,7 +1094,8 @@ class Subject:
 
         # Wrist data -------------------------------------------------------------------------------------------------
         try:
-            ax1.plot(self.wrist.epoch.timestamps, self.wrist.epoch.svm, color='black', label="Wrist")
+            min_len = min([(len(self.wrist.epoch.timestamps)), len(self.wrist.epoch.svm)])
+            ax1.plot(self.wrist.epoch.timestamps[:min_len], self.wrist.epoch.svm[:min_len], color='black', label="Wrist")
         except AttributeError:
             ax1.axhline(y=0, linestyle='dashed', color='black', label="No wrist data")
         ax1.set_ylabel("Counts")
@@ -1102,7 +1103,8 @@ class Subject:
 
         # Ankle data -------------------------------------------------------------------------------------------------
         try:
-            ax2.plot(self.ankle.epoch.timestamps, self.ankle.epoch.svm, color='black', label="Ankle")
+            min_len = min([(len(self.ankle.epoch.timestamps)), len(self.ankle.epoch.svm)])
+            ax2.plot(self.ankle.epoch.timestamps[:min_len], self.ankle.epoch.svm[:min_len], color='black', label="Ankle")
         except AttributeError:
             ax2.axhline(y=0, linestyle='dashed', color='black', label="No ankle data")
         ax2.set_ylabel("Counts")
