@@ -1,6 +1,6 @@
 import ImportEDF
 
-from ecgdetectors.ecgdetectors import Detectors
+from ecgdetectors import Detectors
 # https://github.com/luishowell/ecg-detectors
 
 from matplotlib import pyplot as plt
@@ -170,11 +170,7 @@ class ECG:
         rr_sd = []  # window's RR SD
         r_peaks = []  # all R peak indexes
 
-        marker = len(self.raw) / 10
-
         for start_index in range(0, int(len(self.raw)), self.epoch_len * self.sample_rate):
-            if start_index % marker < self.epoch_len * self.sample_rate:
-                print("{}% complete...".format(round(start_index / len(self.raw) * 100, 0)))
 
             qc = CheckQuality(ecg_object=self, start_index=start_index, epoch_len=self.epoch_len)
 
@@ -835,10 +831,7 @@ class CheckQuality:
 
         # Runs peak detection on raw data ----------------------------------------------------------------------------
         # Uses ecgdetectors package -> stationary wavelet transformation + Pan-Tompkins peak detection algorithm
-        # self.r_peaks, self.wavelet, self.filt_squared = detectors.swt_detector(unfiltered_ecg=self.filt_data)
-        self.r_peaks = detectors.swt_detector(unfiltered_ecg=self.filt_data)
-
-        self.r_peaks = [i for i in self.r_peaks]
+        self.r_peaks, self.wavelet, self.filt_squared = detectors.swt_detector(unfiltered_ecg=self.filt_data)
 
         # Checks to see if there are enough potential peaks to correspond to correct HR range ------------------------
         # Requires number of beats in window that corresponds to ~40 bpm to continue
@@ -875,8 +868,9 @@ class CheckQuality:
 
         # Removes any peak too close to start/end of data section: affects windowing later on ------------------------
         # Peak removed if within median_rr/2 samples of start of window
-        # Peak removed if within median_rr/2 samples of end of window
+        # Peak removed if within median_rrfs/2 samples of end of window
         for i, peak in enumerate(self.r_peaks):
+            # if peak < (self.median_rr/2 + 1) or (self.epoch_len*self.fs - peak) < (self.median_rr/2 + 1):
             if peak < (self.median_rr / 2 + 1) or (self.epoch_len * self.fs - peak) < (self.median_rr / 2 + 1):
                 self.removed_peak.append(self.r_peaks.pop(i))
                 self.removal_indexes.append(i)
@@ -1067,15 +1061,14 @@ class CheckQuality:
 # --------------------------------------------------------------------------------------------------------------------
 
 
-"""x = ECG(subject_id=3028, filepath="C:/Users/ksweber/Desktop/OND07_WTL_3028_02_BF.edf",
+"""x = ECG(subject_id=3028, filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3028_01_BF.edf",
         output_dir=None, processed_folder=None,
-        processed_file=None, ecg_downsample=1,
+        processed_file=None, ecg_downsample=2,
         age=0, start_offset=0, end_offset=0,
-        rest_hr_window=60, n_epochs_rest=30,
-        epoch_len=15, load_accel=False,
+        rest_hr_window=60, n_epochs_rest=10,
+        epoch_len=15, load_accel=True,
         filter_data=False, low_f=1, high_f=30, f_type="bandpass",
         load_raw=True, from_processed=False)"""
 
 # Non-wear algorithm
 # x.nonwear = x.calculate_nonwear(epoch_len=15, plot_data=True)
-

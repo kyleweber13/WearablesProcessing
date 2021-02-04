@@ -721,10 +721,13 @@ class CheckQuality:
 # --------------------------------------------------------------------------------------------------------------------
 
 # Creates object and does all the processing
-ecg = ECG(filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3025_01_BF.EDF",
+"""ecg = ECG(filepath="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_3028_01_BF.EDF",
           run_qc_check=False,
           start_offset=0, end_offset=0, epoch_len=15, load_accel=True,
-          filter_data=False, low_f=1, high_f=30, f_type="bandpass")
+          filter_data=False, low_f=1, high_f=30, f_type="bandpass")"""
+
+# Plots raw, filtered, and wavelet data. Able to set downsample ratio (defaults to 2).
+# ecg.plot_all_data(downsample_ratio=2)
 
 """Additional stuff. Highlight + right-click + "execute selection in python console" to run.
 
@@ -738,9 +741,6 @@ ecg.plot_qc_segment(input_index=None, template_data='filtered', plot_steps=False
 
 # Plots histogram of epoched HR distribution (5bpm bin width). Marks average HR. 
 ecg.plot_histogram()
-
-# Plots raw, filtered, and wavelet data. Able to set downsample ratio (defaults to 2).
-ecg.plot_all_data(downsample_ratio=2)
 
 # Viewing filtered data with quality check output
 ecg.plot_validity(downsample_ratio=3)
