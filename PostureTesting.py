@@ -5,13 +5,14 @@ from Filtering import filter_signal
 import matplotlib.dates as mdates
 from datetime import timedelta
 import math
+import ImportEDF
 
 xfmt = mdates.DateFormatter("%H:%M:%S")
 
 
 class Data:
 
-    def __init__(self, la_file=None, ra_file=None, lw_file=None, rw_d_file=None, rw_p_file=None,
+    def __init__(self, la_file=None, ra_file=None, lw_file=None, rw_d_file=None, rw_p_file=None, bf_file=None,
                  event_log=None, fs=30):
 
         self.la_file = la_file
@@ -19,14 +20,17 @@ class Data:
         self.lw_file = lw_file
         self.rw_d_file = rw_d_file
         self.rw_p_file = rw_p_file
+        self.bf_file = bf_file
         self.event_log = event_log
         self.fs = fs
+        self.bf_fs = 25
 
         self.df_la = None
         self.df_ra = None
         self.df_lw = None
         self.df_rw_d = None
         self.df_rw_p = None
+        self.df_bf = None
         self.df_event = None
 
         self.la_posture = None
@@ -34,6 +38,7 @@ class Data:
         self.lw_posture = None
         self.rw_d_posture = None
         self.rw_p_posture = None
+        self.bf_posture = None
 
     def import_files(self):
 
@@ -68,6 +73,25 @@ class Data:
             self.df_rw_p = pd.read_csv(self.rw_p_file, skiprows=100, usecols=[0, 1, 2, 3, 6])
             self.df_rw_p.columns = ["Timestamp", "x", "y", "z", "temperature"]
             self.df_rw_p["Timestamp"] = pd.to_datetime(self.df_rw_p["Timestamp"], format="%Y-%m-%d %H:%M:%S:%f")
+
+        if self.bf_file is not None:
+            print("-Bittium Faros")
+
+            import pyedflib
+
+            file = pyedflib.EdfReader(self.bf_file)
+            x = file.readSignal(chn=0, start=0)
+            y = file.readSignal(chn=1, start=0)
+            z = file.readSignal(chn=2, start=0)
+            self.bf_fs = file.getSampleFrequencies()[1]
+            starttime = file.getStartdatetime()
+            timestamps = pd.date_range(start=starttime, end=starttime + timedelta(seconds=len(x)/self.bf_fs),
+                                       freq="{}ms".format(1000/self.bf_fs))
+
+            self.df_bf = pd.DataFrame(list(zip(timestamps, x, y, z)),
+                                      columns=["Timestamp", "x", "y", "z"])
+
+            file.close()
 
         if self.event_log is not None:
             print("-Event log")
@@ -130,9 +154,19 @@ class Data:
             self.df_rw_p["z_filt"] = filter_signal(data=self.df_rw_p["z"], filter_type=filter_type,
                                                    low_f=low_f, high_f=high_f, sample_f=self.fs)
 
+        # Bittium Faros
+        if self.df_bf is not None:
+            print("-Bittium Faros")
+            self.df_bf["x_filt"] = filter_signal(data=self.df_bf["x"], filter_type=filter_type,
+                                                 low_f=low_f, high_f=high_f, sample_f=self.bf_fs)
+            self.df_bf["y_filt"] = filter_signal(data=self.df_bf["y"], filter_type=filter_type,
+                                                 low_f=low_f, high_f=high_f, sample_f=self.bf_fs)
+            self.df_bf["z_filt"] = filter_signal(data=self.df_bf["z"], filter_type=filter_type,
+                                                 low_f=low_f, high_f=high_f, sample_f=self.bf_fs)
+
         print("Complete.")
 
-    def plot_filtered(self):
+    def plot_filtered(self, show_events=True):
 
         print("\nPlotting filtered data...")
 
@@ -141,35 +175,39 @@ class Data:
 
         plt.suptitle("007_Posture_Testing - Event Log Data")
 
-        ax1.plot(self.df_lw["Timestamp"], self.df_lw["x_filt"], color='black', label="x")
-        ax1.plot(self.df_lw["Timestamp"], self.df_lw["y_filt"], color='red', label="y")
-        ax1.plot(self.df_lw["Timestamp"], self.df_lw["z_filt"], color='dodgerblue', label="z")
-        ax1.set_title("Left wrist")
-        ax1.set_ylim(ax1.get_ylim()[0], 1.5)
+        if self.lw_file is not None:
+            ax1.plot(self.df_lw["Timestamp"], self.df_lw["x_filt"], color='black', label="x")
+            ax1.plot(self.df_lw["Timestamp"], self.df_lw["y_filt"], color='red', label="y")
+            ax1.plot(self.df_lw["Timestamp"], self.df_lw["z_filt"], color='dodgerblue', label="z")
+            ax1.set_title("Left wrist")
+            ax1.set_ylim(ax1.get_ylim()[0], 1.5)
         ax1.set_ylabel("G")
         ax1.legend(loc='upper right')
 
-        ax2.plot(self.df_rw_p["Timestamp"], self.df_rw_p["x_filt"], color='black', label="x")
-        ax2.plot(self.df_rw_p["Timestamp"], self.df_rw_p["y_filt"], color='red', label="y")
-        ax2.plot(self.df_rw_p["Timestamp"], self.df_rw_p["z_filt"], color='dodgerblue', label="z")
-        ax2.set_title("Right wrist")
-        ax2.set_ylim(ax2.get_ylim()[0], 1.5)
+        if self.rw_p_file is not None:
+            ax2.plot(self.df_rw_p["Timestamp"], self.df_rw_p["x_filt"], color='black', label="x")
+            ax2.plot(self.df_rw_p["Timestamp"], self.df_rw_p["y_filt"], color='red', label="y")
+            ax2.plot(self.df_rw_p["Timestamp"], self.df_rw_p["z_filt"], color='dodgerblue', label="z")
+            ax2.set_title("Right wrist")
+            ax2.set_ylim(ax2.get_ylim()[0], 1.5)
         ax2.set_ylabel("G")
         ax2.legend(loc='upper right')
 
-        ax3.plot(self.df_la["Timestamp"], self.df_la["x_filt"], color='black', label="x")
-        ax3.plot(self.df_la["Timestamp"], self.df_la["y_filt"], color='red', label="y")
-        ax3.plot(self.df_la["Timestamp"], self.df_la["z_filt"], color='dodgerblue', label="z")
-        ax3.set_title("Left ankle")
-        ax3.set_ylim(ax3.get_ylim()[0], 1.5)
+        if self.la_file is not None:
+            ax3.plot(self.df_la["Timestamp"], self.df_la["x_filt"], color='black', label="x")
+            ax3.plot(self.df_la["Timestamp"], self.df_la["y_filt"], color='red', label="y")
+            ax3.plot(self.df_la["Timestamp"], self.df_la["z_filt"], color='dodgerblue', label="z")
+            ax3.set_title("Left ankle")
+            ax3.set_ylim(ax3.get_ylim()[0], 1.5)
         ax3.set_ylabel("G")
         ax3.legend(loc='upper right')
 
-        ax4.plot(self.df_ra["Timestamp"], self.df_ra["x_filt"], color='black', label="x")
-        ax4.plot(self.df_ra["Timestamp"], self.df_ra["y_filt"], color='red', label="y")
-        ax4.plot(self.df_ra["Timestamp"], self.df_ra["z_filt"], color='dodgerblue', label="z")
-        ax4.set_title("Right ankle")
-        ax4.set_ylim(ax4.get_ylim()[0], 1.5)
+        if self.ra_file is not None:
+            ax4.plot(self.df_ra["Timestamp"], self.df_ra["x_filt"], color='black', label="x")
+            ax4.plot(self.df_ra["Timestamp"], self.df_ra["y_filt"], color='red', label="y")
+            ax4.plot(self.df_ra["Timestamp"], self.df_ra["z_filt"], color='dodgerblue', label="z")
+            ax4.set_title("Right ankle")
+            ax4.set_ylim(ax4.get_ylim()[0], 1.5)
         ax4.set_ylabel("G")
         ax4.legend(loc='upper right')
 
@@ -179,23 +217,24 @@ class Data:
         color_dict = {0: 'red', 1: 'limegreen', 2: 'orange', 3: 'dodgerblue', 4: 'yellow', 5: 'purple', 6: 'grey',
                       7: 'lightcoral', 8: 'turquoise', 9: 'brown'}
 
-        for row in self.df_event.itertuples():
+        if show_events:
+            for row in self.df_event.itertuples():
 
-            ax1.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
-                             color=color_dict[row.Index], alpha=.5)
-            ax1.text(x=row.Start + timedelta(seconds=5), y=1.1, s=row.Event, fontsize=7)
+                ax1.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
+                                 color=color_dict[row.Index], alpha=.5)
+                ax1.text(x=row.Start + timedelta(seconds=5), y=1.1, s=row.Event, fontsize=7)
 
-            ax2.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
-                             color=color_dict[row.Index], alpha=.5)
-            ax2.text(x=row.Start + timedelta(seconds=5), y=1.1, s=row.Event, fontsize=7)
+                ax2.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
+                                 color=color_dict[row.Index], alpha=.5)
+                ax2.text(x=row.Start + timedelta(seconds=5), y=1.1, s=row.Event, fontsize=7)
 
-            ax3.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
-                             color=color_dict[row.Index], alpha=.5)
-            ax3.text(x=row.Start + timedelta(seconds=5), y=1.1, s=row.Event, fontsize=7)
+                ax3.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
+                                 color=color_dict[row.Index], alpha=.5)
+                ax3.text(x=row.Start + timedelta(seconds=5), y=1.1, s=row.Event, fontsize=7)
 
-            ax4.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
-                             color=color_dict[row.Index], alpha=.5)
-            ax4.text(x=row.Start + timedelta(seconds=5), y=1.1, s=row.Event, fontsize=7)
+                ax4.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
+                                 color=color_dict[row.Index], alpha=.5)
+                ax4.text(x=row.Start + timedelta(seconds=5), y=1.1, s=row.Event, fontsize=7)
 
     def calculate_posture(self, device, epoch_len=5):
 
@@ -326,16 +365,13 @@ class Data:
                 ax2.xaxis.set_major_formatter(xfmt)
                 plt.xticks(rotation=45, fontsize=8)
 
-                color_dict = {0: 'red', 1: 'limegreen', 2: 'orange', 3: 'dodgerblue', 4: 'yellow', 5: 'purple', 6: 'grey',
-                              7: 'lightcoral', 8: 'turquoise', 9: 'brown'}
-
                 for row in self.df_event.itertuples():
                     ax1.fill_between(x=[row.Start, row.Stop], y1=-1, y2=1,
-                                     color=color_dict[row.Index], alpha=.5)
+                                     color="grey" if row.Index%2 == 0 else "lightgrey", alpha=.5)
                     ax1.text(x=row.Start + timedelta(seconds=5), y=1, s=row.Event, fontsize=7)
 
                     ax2.fill_between(x=[row.Start, row.Stop], y1=0, y2=180,
-                                     color=color_dict[row.Index], alpha=.5)
+                                     color="grey" if row.Index%2 == 0 else "lightgrey", alpha=.5)
                     ax2.text(x=row.Start + timedelta(seconds=5), y=180, s=row.Event, fontsize=7)
 
             return df
@@ -430,27 +466,35 @@ class Data:
             for row in data.itertuples():
 
                 # Shin vertical = sit/stand
-                if row.Y_angle >= 90 and row.Y_angle > row.X_angle and row.Y_angle > row.Z_angle:
+                if row.Y_angle >= 135 and row.Y_angle > row.X_angle and 45 <= row.X_angle <= 135 and \
+                        row.Y_angle > row.Z_angle and 45 <= row.Z_angle <= 135:
                     orient.append("Sit/stand")
 
                 # Shin horizontal = feet up (supine/reclined)
-                elif row.X_angle >= 90 and row.X_angle > row.Y_angle and row.X_angle > row.Z_angle:
+                elif row.X_angle >= 135 and row.X_angle > row.Y_angle and row.X_angle > row.Z_angle:
                     orient.append("Supine/recline")
 
                 # Shin horizontal = feet up (prone)
-                elif row.X_angle <= 90 and row.X_angle < row.Y_angle and row.X_angle < row.Z_angle:
+                elif row.X_angle <= 90 and row.X_angle < row.Y_angle and row.X_angle < row.Z_angle <= 135:
                     orient.append("Prone")
 
                 # Shin horizontal = lying on right side
-                elif row.Z_angle >= 90 and row.Z_angle > row.X_angle and row.Z_angle > row.Y_angle:
+                elif row.Z_angle >= 135 and row.Z_angle > row.X_angle and 45 <= row.X_angle <= 135 and \
+                        row.Z_angle > row.Y_angle and 45 <= row.Y_angle <= 135:
                     orient.append("Lying right")
 
                 # Shin horizontal = lying on left side
-                elif row.Z_angle <= 90 and row.Z_angle < row.X_angle and row.Z_angle < row.Y_angle:
+                elif row.Z_angle <= 90 and row.Z_angle < row.X_angle and 45 <= row.X_angle <= 135 and \
+                        row.Z_angle < row.Y_angle and 45 <= row.Y_angle <= 135:
                     orient.append("Lying left")
 
                 else:
                     orient.append("Other")
+
+        if device == "bf_v" or device == "BF_V":
+            data = self.calculate_inclination_angle(dataframe=self.df_bf, show_data=False, epoch_len=epoch_len)
+
+            pass
 
         if plot_posture:
             fig, (ax1, ax2) = plt.subplots(2, sharex='col', figsize=(12, 9))
@@ -461,15 +505,14 @@ class Data:
             ax1.legend()
             ax1.set_ylabel("Angle")
             ax2.plot(data["Timestamp"], orient, color='black', marker="o", markersize=2)
-            color_dict = {0: 'red', 1: 'limegreen', 2: 'orange', 3: 'dodgerblue', 4: 'yellow', 5: 'purple', 6: 'grey',
-                          7: 'lightcoral', 8: 'turquoise', 9: 'brown'}
 
             ylim0 = ax2.get_ylim()[0]
             ylim1 = ax2.get_ylim()[1]
 
             for row in self.df_event.itertuples():
-                ax2.fill_between(x=[row.Start, row.Stop], y1=ylim0, y2=ylim1, color=color_dict[row.Index], alpha=.5)
-                ax2.text(x=row.Start + timedelta(seconds=5), y="Sit/stand", s=row.Event, fontsize=7)
+                ax2.fill_between(x=[row.Start, row.Stop], y1=ylim0, y2=ylim1,
+                                 color="grey" if row.Index%2 == 0 else "dodgerblue", alpha=.5)
+                ax2.text(x=row.Start + timedelta(seconds=5), y="Sit/stand", s=row.Event, fontsize=8)
 
             ax2.xaxis.set_major_formatter(xfmt)
             plt.xticks(rotation=45, fontsize=8)
@@ -479,17 +522,24 @@ class Data:
         return data
 
 
-data = Data(la_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/007_LAnkle.csv",
-            ra_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/007_RAnkle.csv",
-            lw_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/007_LWrist.csv",
-            rw_d_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/007_RWrist_Distal.csv",
-            rw_p_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/007_RWrist_Proximal.csv",
-            event_log="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/EventLog.xlsx")
+"""data = Data(la_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test1/007_LAnkle.csv",
+            ra_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test1/007_RAnkle.csv",
+            lw_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test1/007_LWrist.csv",
+            rw_d_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test1/007_RWrist_Distal.csv",
+            rw_p_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test1/007_RWrist_Proximal.csv",
+            event_log="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test1/EventLog.xlsx")
+"""
+
+data = Data(la_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test2/Test_LA.csv",
+            lw_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test2/Test_LW.csv",
+            bf_file="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test2/Test_BF_V.edf",
+            event_log="O:/OBI/Personal Folders/Kyle Weber/Posture/007_Posture_SampleDataset/Test2/EventLog.xlsx")
+
 data.import_files()
 data.filter_accels(low_f=0.1, high_f=15, filter_type="lowpass")
-# data.plot_filtered()
+# data.plot_filtered(show_events=False)
 # data.la_posture = data.calculate_posture(device="la", epoch_len=5)
 
 # data.plot_angles(epoch_len=5, show_events=True)
 
-la_posture = data.calculate_posture_angles(device='Left ankle', epoch_len=5, plot_posture=True)
+# la_posture = data.calculate_posture_angles(device='Left ankle', epoch_len=5, plot_posture=True)
