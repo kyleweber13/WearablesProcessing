@@ -41,6 +41,7 @@ class Data:
         self.df_walks = None
 
     def check_sync(self):
+        """Checks start times for all given files. Makes sure all devices start at same time."""
 
         lw_crop_index = 0
         rw_crop_index = 0
@@ -70,6 +71,7 @@ class Data:
             self.accel_fs = lw_fs
 
     def import_data(self):
+        """Imports wrist and ECG data"""
 
         self.lw = ImportEDF.GENEActiv(filepath=self.lw_file, load_raw=True, start_offset=self.crop_dict["LW"])
         self.rw = ImportEDF.GENEActiv(filepath=self.rw_file, load_raw=True, start_offset=self.crop_dict["RW"])
@@ -77,6 +79,7 @@ class Data:
                                      epoch_len=self.epoch_len)
 
     def scale_cutpoints(self):
+        """Scales accelerometer cutpoints based on epoch length and sampling rate"""
 
         nd_light = 255 * self.accel_fs / 100 * self.epoch_len / 60
         nd_mod = 588 * self.accel_fs / 100 * self.epoch_len / 60
@@ -87,6 +90,7 @@ class Data:
         self.cutpoints = {"ND_Light": nd_light, "ND_Mod": nd_mod, "D_Light": d_light, "D_Mod": d_mod}
 
     def epoch1s_accels(self):
+        """Epochs accelerometer data into one-second epochs"""
 
         print("\n-Epoching accelerometer data into 1-second epochs...")
         lw_svm = []
@@ -105,6 +109,11 @@ class Data:
         self.df_svm = pd.DataFrame(list(zip(epoch_stamps, lw_svm, rw_svm)), columns=["Timestamp", "LW_SVM", "RW_SVM"])
 
     def import_gait_log(self, threshold=None):
+        """Imports gait long and stores long walks as separate dataframe
+
+            :argument
+            -threshold: thresholds for a 'long walk' in minutes
+        """
 
         if threshold is not None:
             self.gait_thresh = threshold
@@ -128,6 +137,11 @@ class Data:
             print("-Found {} bouts lasting longer than {} minutes.".format(self.gait_log_long.shape[0], threshold))
 
     def process_gait_bouts(self, pad_len_min=None):
+        """Processes data only during long walks.
+
+            :argument
+            -pad_len_min: 'pads' data with pre/post walk data, number of minutes
+        """
 
         if pad_len_min is not None:
             self.pad_window = pad_len_min
@@ -142,6 +156,7 @@ class Data:
         walk_nums = []
         timestamps = []
         into_bouts = []
+        event = []
         epoch_hr = []
 
         for bout in self.gait_log_long.itertuples():
@@ -161,32 +176,48 @@ class Data:
                 if not qc.valid_period:
                     epoch_hr.append(None)
 
-            df = self.df_svm.loc[(self.df_svm["Timestamp"] >= bout.start_timestamp) &
-                                 (self.df_svm["Timestamp"] <= bout.end_timestamp)]
+            df = self.df_svm.loc[(self.df_svm["Timestamp"] >=
+                                  bout.start_timestamp + timedelta(seconds=-pad_len_min*60)) &
+                                 (self.df_svm["Timestamp"] < bout.end_timestamp +
+                                  timedelta(seconds=pad_len_min*60))]
 
             stamps = pd.date_range(start=bout.start_timestamp + timedelta(seconds=-self.pad_window * 60),
                                    end=bout.end_timestamp + timedelta(seconds=self.pad_window * 60 + self.epoch_len),
                                    freq="{}S".format(self.epoch_len))
 
             for start, end in zip(stamps[:], stamps[1:]):
-                d = df.loc[(df["Timestamp"] >= start) & (df["Timestamp"] <= end)]
+                d = df.loc[(df["Timestamp"] >= start) & (df["Timestamp"] < end)]
                 lw_svm.append(sum(d["LW_SVM"]))
                 rw_svm.append(sum(d["RW_SVM"]))
                 walk_nums.append(bout.Index + 1)
                 timestamps.append(start)
 
-                into_bout = (start - bout.start_timestamp).total_seconds()
+                """into_bout = (start - bout.start_timestamp).total_seconds()
                 if start <= bout.end_timestamp:
                     into_bouts.append(into_bout)
                 if start > bout.end_timestamp:
-                    into_bouts.append("+" + str((round((start - bout.end_timestamp).total_seconds(), 1))))
+                    into_bouts.append("+" + str((round((start - bout.end_timestamp).total_seconds(), 1))))"""
+                into_bout = (start - bout.start_timestamp).total_seconds()
 
-        epoch = pd.DataFrame(list(zip(timestamps, walk_nums, lw_svm, rw_svm, epoch_hr, into_bouts)),
-                             columns=["Timestamp", "Walk_num", "LW_SVM", "RW_SVM", "HR", "Time_into_bout"])
+                if start <= bout.start_timestamp:
+                    event.append("Pre")
+                    into_bouts.append(into_bout)
+                if bout.start_timestamp < start <= bout.end_timestamp:
+                    event.append("Bout")
+                    into_bouts.append(into_bout)
+                if start > bout.end_timestamp:
+                    event.append("Post")
+                    into_bouts.append(round((start-bout.end_timestamp).total_seconds(), 1))
+
+        epoch = pd.DataFrame(list(zip(timestamps, walk_nums, [round(i, 2) for i in lw_svm],
+                                      [round(i, 2) for i in rw_svm],
+                                      [round(i, 1) if i is not None else None for i in epoch_hr], into_bouts, event)),
+                             columns=["Timestamp", "Walk_num", "LW_SVM", "RW_SVM", "HR", "Time_into_bout", "Event"])
 
         self.df_walks = epoch
 
     def calculate_wrist_intensity(self):
+        """Calculates wrist intensity using cutpoints."""
 
         lw = []
         rw = []
@@ -230,8 +261,13 @@ class Data:
 
     def find_resting_hr(self, rest_hr=None, window_size=60, n_windows=30, sleep_log=None):
         """Function that calculates resting HR based on inputs.
+           Able to input a resting HR value to skip ECG processing.
 
         :argument
+        -rest_hr: int/float if already calculated; will skip ECG processing
+            -If None, will perform ECG processing
+        -sleep_log: pathway to sleep log
+            -If None, will (obviously) not remove sleep periods --> lower resting HR
         -window_size: size of window over which rolling average is calculated, seconds
         -n_windows: number of epochs over which resting HR is averaged (lowest n_windows number of epochs)
         -sleep_status: data from class Sleep that corresponds to asleep/awake epochs
@@ -269,7 +305,7 @@ class Data:
 
             self.epoch_hr = pd.DataFrame(list(zip(pd.date_range(start=self.ecg.timestamps[0], end=self.ecg.timestamps[-1],
                                                              freq="{}S".format(self.epoch_len)),
-                                                  epoch_hr)),
+                                                  [round(i, 1) for i in epoch_hr])),
                                          columns=["Timestamp", "HR"])
 
             # Calculates resting HR -----------------------------------------------------------------------------------
@@ -331,19 +367,25 @@ class Data:
             self.rest_hr = resting_hr
 
     def calculate_hrr(self, age=30):
+        """Uses predicted max HR and measured resting HR to quantify %HRR data.
+
+            :argument
+            -age: participant age in years
+        """
 
         print("\nCalculating %HRR data...")
 
         hrr = (208 - .7 * age - self.rest_hr)
 
         # HR during walks ---------------------------------------------------------------------------------------------
-        hrr_list = [(hr - self.rest_hr) / hrr * 100 if hr is not None else None for hr in self.df_walks["HR"]]
+        hrr_list = [round((hr - self.rest_hr) / hrr * 100, 1) if not np.isnan(hr) else None
+                    for hr in self.df_walks["HR"]]
         self.df_walks["%HRR"] = hrr_list
 
         hrr_intensity = []
 
         for hr in hrr_list:
-            if np.isnan(hr):
+            if hr is None:
                 hrr_intensity.append(None)
             if hr is not None:
                 if hr < 30:
@@ -356,13 +398,14 @@ class Data:
         self.df_walks["HRR_Intensity"] = hrr_intensity
 
         # HR during all data ------------------------------------------------------------------------------------------
-        hrr_list = [(hr - self.rest_hr) / hrr * 100 if hr is not None else None for hr in self.epoch_hr["HR"]]
+        hrr_list = [round((hr - self.rest_hr) / hrr * 100, 1) if not np.isnan(hr) else None
+                    for hr in self.epoch_hr["HR"]]
         self.epoch_hr["%HRR"] = hrr_list
 
         hrr_intensity = []
 
         for hr in hrr_list:
-            if np.isnan(hr):
+            if hr is None:
                 hrr_intensity.append(None)
             if hr is not None:
                 if hr < 30:
@@ -374,7 +417,14 @@ class Data:
 
         self.epoch_hr["HRR_Intensity"] = hrr_intensity
 
-    def plot_longwalk_data(self, start=None, stop=None, save_image=False, image_path=None):
+    def plot_all_data(self, start=None, stop=None, save_image=False, image_path=None):
+        """Able to plot specified sections of data. Shades long walking bouts. Able to save.
+
+            :argument
+            -start/stop: timestamp or None to crop data
+            -save_image: boolean. If True, saves image to path specified by image_path
+            -image_path: save location and filename of image
+        """
 
         if self.epoch_hr.shape[0] == 0:
             df_hr = self.df_walks
@@ -415,19 +465,19 @@ class Data:
 
             # Shades padded area in red
             ax1.fill_between(x=[row.start_timestamp + timedelta(seconds=-self.pad_window * 60), row.start_timestamp],
-                             y1=0, y2=max(self.df_svm["LW_SVM"]), color='red', alpha=.5)
+                             y1=0, y2=max(self.df_svm["LW_SVM"]), color='lightgrey', alpha=.5)
             ax1.fill_between(x=[row.end_timestamp, row.end_timestamp + timedelta(seconds=self.pad_window * 60)],
-                             y1=0, y2=max(self.df_svm["LW_SVM"]), color='red', alpha=.5)
+                             y1=0, y2=max(self.df_svm["LW_SVM"]), color='orange', alpha=.5)
 
             ax2.fill_between(x=[row.start_timestamp + timedelta(seconds=-self.pad_window * 60), row.start_timestamp],
-                             y1=0, y2=max(self.df_svm["RW_SVM"]), color='red', alpha=.5)
+                             y1=0, y2=max(self.df_svm["RW_SVM"]), color='lightgrey', alpha=.5)
             ax2.fill_between(x=[row.end_timestamp, row.end_timestamp + timedelta(seconds=self.pad_window * 60)],
-                             y1=0, y2=max(self.df_svm["RW_SVM"]), color='red', alpha=.5)
+                             y1=0, y2=max(self.df_svm["RW_SVM"]), color='orange', alpha=.5)
 
             ax3.fill_between(x=[row.start_timestamp + timedelta(seconds=-self.pad_window * 60), row.start_timestamp],
-                             y1=0, y2=max([i for i in df_hr["%HRR"] if not np.isnan(i)]), color='red', alpha=.5)
+                             y1=0, y2=max([i for i in df_hr["%HRR"] if not np.isnan(i)]), color='lightgrey', alpha=.5)
             ax3.fill_between(x=[row.end_timestamp, row.end_timestamp + timedelta(seconds=self.pad_window * 60)],
-                             y1=0, y2=max([i for i in df_hr["%HRR"] if not np.isnan(i)]), color='red', alpha=.5)
+                             y1=0, y2=max([i for i in df_hr["%HRR"] if not np.isnan(i)]), color='orange', alpha=.5)
 
         if start is None and stop is None:
             pass
@@ -443,14 +493,32 @@ class Data:
             plt.savefig(image_path)
 
     def generate_longwalk_images(self, image_path="/Users/kyleweber/Desktop/{}_LongWalk{}.png"):
+        """Loops through long walks and calls self.plot_longwalk_data for specified region of data. Saves images.
+
+        :argument
+        -image_path: pathway where image(s) are saved. Include {} for walk index.
+        """
 
         for row in self.gait_log_long.itertuples():
             plt.close('all')
-            self.plot_longwalk_data(start=row.start_timestamp + timedelta(minutes=-2 * self.pad_window),
-                                    stop=row.end_timestamp + timedelta(minutes=2 * self.pad_window),
-                                    save_image=True,
-                                    image_path=image_path.format(subj_id,row.Index + 1))
+            self.plot_all_data(start=row.start_timestamp + timedelta(minutes=-1.1 * self.pad_window),
+                               stop=row.end_timestamp + timedelta(minutes=1.1 * self.pad_window),
+                               save_image=True,
+                               image_path=image_path.format(subj_id,row.Index + 1))
             plt.close('all')
+
+    def save_data(self, pathway=""):
+        """Saves relevant data to Excel files.
+
+            :argument
+            -pathway: where files are saved
+        """
+
+        print("\nSaving relevant data to {}..".format(pathway))
+
+        self.df_walks.to_excel(pathway + "{}_LongWalk_Data.xlsx".format(subj_id), index=False)
+
+        self.gait_log_long.to_excel(pathway + "{}_LongWalks_Log.xlsx".format(subj_id), index=False)
 
 
 subj_id = 3034
@@ -467,9 +535,10 @@ x.scale_cutpoints()
 x.import_gait_log(threshold=3)
 x.process_gait_bouts(pad_len_min=3)
 x.calculate_wrist_intensity()
-# x.find_resting_hr(rest_hr=57.8, window_size=60, n_windows=30, sleep_log="/Users/kyleweber/Desktop/Sleep.xlsx")
-x.find_resting_hr(rest_hr=None, window_size=60, n_windows=30, sleep_log="/Users/kyleweber/Desktop/Sleep.xlsx")
+x.find_resting_hr(rest_hr=57.8, window_size=60, n_windows=30, sleep_log="/Users/kyleweber/Desktop/Sleep.xlsx")
+# x.find_resting_hr(rest_hr=None, window_size=60, n_windows=30, sleep_log="/Users/kyleweber/Desktop/Sleep.xlsx")
 x.calculate_hrr(age=34)
 
-x.plot_longwalk_data(save_image=False)
-# x.generate_longwalk_images(image_path="/Users/kyleweber/Desktop/{}_LongWalk{}.png")
+# x.plot_all_data(save_image=False)
+# x.generate_longwalk_images(image_path="/Users/kyleweber/Desktop/Kin 472 - Nidhi/{}_LongWalk{}.png")
+# x.save_data(pathway="/Users/kyleweber/Desktop/Kin 472 - Nidhi/")
