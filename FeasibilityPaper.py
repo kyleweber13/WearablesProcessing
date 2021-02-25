@@ -8,33 +8,9 @@ from scikit_posthocs import posthoc_conover_friedman as conover
 import math
 
 """
-===================================================== DATA IMPORT =====================================================
-"""
-
-filename = "/Users/kyleweber/Desktop/Data Tables From Adam_11Feb2021.xlsx"
-
-# Average nonwear rate per participant across 4 days of wear
-df1 = pd.read_excel(filename, sheet_name="Figure 1", skiprows=3, usecols=[0, 1, 2, 3, 4, 5])
-
-df1_long = pd.melt(df1, id_vars="Participant", var_name="Location", value_name="Values")
-df1_desc = df1_long.groupby("Location")["Values"].describe()
-
-# Nonwear rate (at least 2 sensors) by time of day
-df2a = pd.read_excel(filename, sheet_name="Figure 2A", skiprows=4, usecols=[0, 1, 2])
-df2a_desc = df2a[["Day", "Night"]].describe().transpose()
-
-# Nonwear rates by day, >= 2 devices removed
-df2b = pd.read_excel(filename, sheet_name="Figure 2b", skiprows=4, usecols=[0, 1, 2, 3, 4, 5, 6])
-df2b_long = pd.melt(df2b, id_vars="Participant", var_name="Day", value_name="Values")
-df2b_desc = df2b_long.groupby("Day")["Values"].describe()
-
-# Daily average nonwear % by cohort
-df_intext = pd.read_excel(filename, sheet_name="Kyle's Tab")
-df_intext_desc = df_intext.groupby("Cohort")["Values"].describe()
-
-"""
 ===================================================== STATISTICS ======================================================
 """
+
 
 def check_normality(dataframe, transform=None):
 
@@ -151,146 +127,190 @@ def generate_mean_plot(dataframe, error_bars="sd"):
 
 
 """
+================================================= CLASS DEFINITION ====================================================
+"""
 
-# Checks normality for all columns in given wide-format DF
-check_normality(dataframe=df1, transform=None)
 
-# Generates histogram of all non-participant columns in wide-format DF
-generate_histograms(df2a)
+class DataAnalysis:
 
-# Generates boxplot from long-format DF sorted by "by" column name
-df1_long.boxplot(by="Location", column="Values")
-df2a.boxplot(column=["Day", "Night"], cumulative=True)
-df2b_long.boxplot(by="Day", column="Values")
-df_intext.boxplot(by="Cohort", column='Values')
+    def __init__(self, filename):
 
-# Generates group means for descriptive format DF. Able to have "sd", "sem", or "x%ci" error bars
-generate_mean_plot(df1_desc, "std")
+        self.filename = filename
+
+        self.df1, self.df1_long, self.df1_desc, self.df2a, self.df2a_desc, \
+        self.df2b, self.df2b_long, self.df2b_desc, self.df_intext, self.df_intext_desc = self.import_data()
+
+    def import_data(self):
+
+        # Average nonwear rate per participant across 4 days of wear
+        df1 = pd.read_excel(self.filename, sheet_name="Figure 1", skiprows=3, usecols=[0, 1, 2, 3, 4, 5])
+
+        df1_long = pd.melt(df1, id_vars="Participant", var_name="Location", value_name="Values")
+        df1_desc = df1_long.groupby("Location")["Values"].describe()
+
+        # Nonwear rate (at least 2 sensors) by time of day
+        df2a = pd.read_excel(self.filename, sheet_name="Figure 2A", skiprows=4, usecols=[0, 1, 2])
+        df2a_desc = df2a[["Day", "Night"]].describe().transpose()
+
+        # Nonwear rates by day, >= 2 devices removed
+        df2b = pd.read_excel(self.filename, sheet_name="Figure 2b", skiprows=4, usecols=[0, 1, 2, 3, 4, 5, 6])
+        df2b_long = pd.melt(df2b, id_vars="Participant", var_name="Day", value_name="Values")
+        df2b_desc = df2b_long.groupby("Day")["Values"].describe()
+
+        # Daily average nonwear % by cohort
+        df_intext = pd.read_excel(self.filename, sheet_name="Kyle's Tab")
+        df_intext_desc = df_intext.groupby("Cohort")["Values"].describe()
+
+        return df1, df1_long, df1_desc, df2a, df2a_desc, df2b, df2b_long, df2b_desc, df_intext, df_intext_desc
+
+    def plot_figure1(self, show_boxplot=False, max_y=None):
+
+        plt.subplots(1, figsize=(10, 6))
+
+        colors = ['red', 'orange', 'yellow', 'green', 'dodgerblue']
+        line_x = -.25
+
+        if show_boxplot:
+            medianprops = dict(linewidth=2, color='red')
+
+            plt.boxplot(self.df1[["Left Ankle", "Right Ankle", "Left Wrist", "Right Wrist", "Chest"]],
+                        positions=[0, 1, 2, 3, 4], medianprops=medianprops,
+                        showfliers=False, manage_ticks=False, zorder=1)
+
+        for i, colname, color in zip(np.arange(0, 5), self.df1.columns[1:], colors):
+            plt.scatter([i for j in range(self.df1.shape[0])], self.df1[colname], color='grey', edgecolor='black', zorder=0)
+            if not show_boxplot:
+                plt.plot([line_x, line_x + .5], [self.df1[colname].median(), self.df1[colname].median()], 'k-', lw=2)
+
+            line_x += 1
+
+        plt.xlabel("Wear Location")
+        plt.ylabel("Percent Non-Wear")
+
+        if max_y is not None:
+            plt.ylim(-5, max_y)
+
+        plt.xticks([0, 1, 2, 3, 4], ["Left Ankle", "Right Ankle", "Left Wrist", "Right Wrist", "Chest"])
+
+    def plot_figure2a(self, label_subjs=False, show_boxplot=True, y_max=None):
+
+        plt.subplots(1, figsize=(10, 6))
+
+        if show_boxplot:
+            medianprops = dict(linewidth=2, color='red')
+
+            plt.boxplot(self.df2a[["Day", "Night"]], positions=[0, 1], medianprops=medianprops,
+                        showfliers=False, manage_ticks=False, zorder=1)
+
+        if not label_subjs:
+            line_x = -.25
+            for time, color in zip(["Day", "Night"], ['white', 'grey']):
+
+                plt.scatter([time for i in range(self.df2a.shape[0])], self.df2a[time], color=color, edgecolor='black')
+
+                if not show_boxplot:
+                    plt.plot([line_x, line_x + .5], [self.df2a[time].median(), self.df2a[time].median()], 'k-', lw=2)
+
+                line_x += 1
+
+        if label_subjs:
+            for time, color in zip([0, 1], ['white', 'grey']):
+                for i, val in enumerate(self.df2a.iloc[:, time + 1]):
+                    plt.text(time, val, s=int(self.df2a.loc[i]["Participant"]))
+
+        plt.xticks([0, 1], ["Day", "Night"])
+        plt.xlim(-1, 2)
+        plt.xlabel("Time of Day")
+        plt.ylabel("Percent Non-Wear")
+
+        if y_max is not None:
+            plt.ylim(-2, y_max)
+
+    def plot_figure2b(self, label_subjs=False, show_boxplot=True, y_max=None, greyscale=True):
+
+        plt.subplots(1, figsize=(10, 6))
+
+        line_x = -.25
+
+        if show_boxplot:
+            medianprops = dict(linewidth=2, color='red')
+
+            plt.boxplot(self.df2b[["Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6"]],
+                        positions=[0, 1, 2, 3, 4, 5], medianprops=medianprops,
+                        showfliers=False, manage_ticks=False, zorder=1)
+
+        if not label_subjs:
+
+            if not greyscale:
+                colours = ['red', 'orange', 'yellow', 'green', 'dodgerblue', 'purple']
+            if greyscale:
+                colours = ['grey' for i in range(6)]
+
+            for day, color in zip(self.df2b.columns[1:], colours):
+                plt.scatter([day for i in range(self.df2b.shape[0])], self.df2b[day], color=color, edgecolor='black')
+
+                if not show_boxplot:
+                    plt.plot([line_x, line_x + .5], [self.df2b[day].median(), self.df2b[day].median()], 'k-', lw=2)
+
+                line_x += 1
+
+        if label_subjs:
+            for day, color in zip(np.arange(0, 7), ['red', 'orange', 'yellow', 'green', 'dodgerblue', 'purple']):
+                for i, val in enumerate(self.df2b.iloc[:, day + 1]):
+                    plt.text(day, val, s=int(self.df2b.loc[i]["Participant"]))
+
+        plt.xticks(np.arange(0, self.df2b.shape[1] - 1), self.df2b.columns[1:])
+        plt.xlabel("Day")
+        plt.ylabel("Percent Non-Wear")
+
+        if y_max is not None:
+            plt.ylim(-3, y_max)
+        plt.xlim(-.5, 6)
+
+
+data = DataAnalysis(filename="/Users/kyleweber/Desktop/Data Tables From Adam_11Feb2021.xlsx")
+
+"""
+===================================================== STATISTICS ======================================================
+"""
+
+"""Checks normality for all columns in given wide-format DF"""
+# check_normality(dataframe=data.df1, transform=None)
 
 # Friedman test + posthocs on Figure1 data
-stats1_main, stats1_nemenyi, stats1_conover = calculate_friedman(dataframe=df1_long, usetest="friedman")
+# stats1_main, stats1_nemenyi, stats1_conover = calculate_friedman(dataframe=data.df1_long, usetest="friedman")
 
 # Wilcoxon test for Figure2a data
-stats2a = pg.wilcoxon(x=df2a["Day"], y=df2a["Night"], tail='two-sided')
+# stats2a = pg.wilcoxon(x=data.df2a["Day"], y=data.df2a["Night"], tail='two-sided')
 
 # Friedman test + posthocs on Figure2b data
-stats2b_main, stats2b_nemenyi, stats2b_conover = calculate_friedman(dataframe=df2b_long, usetest="friedman")
+# stats2b_main, stats2b_nemenyi, stats2b_conover = calculate_friedman(dataframe=data.df2b_long, usetest="friedman")
 
 # Friedman test + pairwise unpaired 'non-parametric T-test' on In Text data
-stats_intext_main, stats_intext_pairwise = calculate_kruskalwallish(dataframe=df_intext)
+# stats_intext_main, stats_intext_pairwise = calculate_kruskalwallish(dataframe=data.df_intext)
 
 """
-
-
-"""
-====================================================== GRAPHING =======================================================
+===================================================== GRAPHING ========================================================
 """
 
+"""Generates histogram of all non-participant columns in wide-format DF"""
+# generate_histograms(data.df1)
+# generate_histograms(data.df2a)
+# generate_histograms(data.df2b)
 
-def plot_figure1(show_boxplot=False, max_y=None):
-    plt.subplots(1, figsize=(10, 6))
+"""Generates boxplot from long-format DF sorted by 'by' column name"""
+# data.df1_long.boxplot(by="Location", column="Values")
+# data.df2a.boxplot(column=["Day", "Night"])
+# data.df2b_long.boxplot(by="Day", column="Values")
+# data.df_intext.boxplot(by="Cohort", column='Values')
 
-    colors = ['red', 'orange', 'yellow', 'green', 'dodgerblue']
-    line_x = -.25
+"""Generates group means for descriptive format DF. Able to have "sd", "sem", or "x%ci" error bars"""
+# generate_mean_plot(data.df1_desc, "std")
+# generate_mean_plot(data.df2a_desc, "std")
+# generate_mean_plot(data.df2b_desc, "std")
+# generate_mean_plot(data.df_intext_desc, "std")
 
-    if show_boxplot:
-        medianprops = dict(linewidth=2, color='red')
-
-        plt.boxplot(df1[["Left Ankle", "Right Ankle", "Left Wrist", "Right Wrist", "Chest"]],
-                    # labels=["Left Ankle", "Right Ankle", "Left Wrist", "Right Wrist", "Chest"],
-                    positions=[0, 1, 2, 3, 4], medianprops=medianprops,
-                    showfliers=False, manage_ticks=False, zorder=1)
-
-    for i, colname, color in zip(np.arange(0, 5), df1.columns[1:], colors):
-        plt.scatter([i for j in range(df1.shape[0])], df1[colname], color='grey', edgecolor='black', zorder=0)
-        if not show_boxplot:
-            plt.plot([line_x, line_x + .5], [df1[colname].median(), df1[colname].median()], 'k-', lw=2)
-
-        line_x += 1
-    plt.xlabel("Wear Location")
-    plt.ylabel("Percent Non-Wear")
-    if max_y is not None:
-        plt.ylim(-5, max_y)
-    plt.xticks([0, 1, 2, 3, 4], ["Left Ankle", "Right Ankle", "Left Wrist", "Right Wrist", "Chest"])
-
-
-def plot_figure2a(label_subjs=False, show_boxplot=True, y_max=None):
-
-    plt.subplots(1, figsize=(10, 6))
-
-    if show_boxplot:
-        medianprops = dict(linewidth=2, color='red')
-
-        plt.boxplot(df2a[["Day", "Night"]], positions=[0, 1], medianprops=medianprops,
-                    showfliers=False, manage_ticks=False, zorder=1)
-
-    if not label_subjs:
-        line_x = -.25
-        for time, color in zip(["Day", "Night"], ['white', 'grey']):
-
-            plt.scatter([time for i in range(df2a.shape[0])], df2a[time], color=color, edgecolor='black')
-
-            if not show_boxplot:
-                plt.plot([line_x, line_x + .5], [df2a[time].median(), df2a[time].median()], 'k-', lw=2)
-
-            line_x += 1
-
-    if label_subjs:
-        for time, color in zip([0, 1], ['white', 'grey']):
-            for i, val in enumerate(df2a.iloc[:, time + 1]):
-                plt.text(time, val, s=int(df2a.loc[i]["Participant"]))
-
-    plt.xticks([0, 1], ["Day", "Night"])
-    plt.xlim(-1, 2)
-    plt.xlabel("Time of Day")
-    plt.ylabel("Percent Non-Wear")
-
-    if y_max is not None:
-        plt.ylim(-2, y_max)
-
-
-def plot_figure2b(label_subjs=False, show_boxplot=True, y_max=None, greyscale=True):
-
-    plt.subplots(1, figsize=(10, 6))
-
-    line_x = -.25
-
-    if show_boxplot:
-        medianprops = dict(linewidth=2, color='red')
-
-        plt.boxplot(df2b[["Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6"]],
-                    positions=[0, 1, 2, 3, 4, 5], medianprops=medianprops,
-                    showfliers=False, manage_ticks=False, zorder=1)
-
-    if not label_subjs:
-
-        if not greyscale:
-            colours = ['red', 'orange', 'yellow', 'green', 'dodgerblue', 'purple']
-        if greyscale:
-            colours = ['grey' for i in range(6)]
-
-        for day, color in zip(df2b.columns[1:], colours):
-            plt.scatter([day for i in range(df2b.shape[0])], df2b[day], color=color, edgecolor='black')
-
-            if not show_boxplot:
-                plt.plot([line_x, line_x + .5], [df2b[day].median(), df2b[day].median()], 'k-', lw=2)
-
-            line_x += 1
-
-    if label_subjs:
-        for day, color in zip(np.arange(0, 7), ['red', 'orange', 'yellow', 'green', 'dodgerblue', 'purple']):
-            for i, val in enumerate(df2b.iloc[:, day + 1]):
-                plt.text(day, val, s=int(df2b.loc[i]["Participant"]))
-
-    plt.xticks(np.arange(0, df2b.shape[1]-1), df2b.columns[1:])
-    plt.xlabel("Day")
-    plt.ylabel("Percent Non-Wear")
-
-    if y_max is not None:
-        plt.ylim(-3, y_max)
-    plt.xlim(-.5, 6)
-
-
-# plot_figure1(show_boxplot=False, max_y=None)
-# plot_figure2a(label_subjs=False, show_boxplot=True, y_max=50)
-# plot_figure2b(label_subjs=False, show_boxplot=True, y_max=25, greyscale=True)
+"""Scatterplots w/ or w/o boxplots"""
+# data.plot_figure1(show_boxplot=False, max_y=None)
+# data.plot_figure2a(label_subjs=False, show_boxplot=True, y_max=50)
+# data.plot_figure2b(label_subjs=False, show_boxplot=False, y_max=25, greyscale=False)
