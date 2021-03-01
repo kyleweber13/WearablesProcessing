@@ -6,6 +6,7 @@ import scipy.stats as stats
 from scikit_posthocs import posthoc_nemenyi_friedman as nemenyi
 from scikit_posthocs import posthoc_conover_friedman as conover
 import math
+import seaborn as sb
 
 """
 ===================================================== STATISTICS ======================================================
@@ -133,9 +134,10 @@ def generate_mean_plot(dataframe, error_bars="sd"):
 
 class DataAnalysis:
 
-    def __init__(self, filename):
+    def __init__(self, filename, figsize=(10, 6)):
 
         self.filename = filename
+        self.fig_size = figsize
 
         self.df1, self.df1_long, self.df1_desc, self.df2a, self.df2a_desc, \
         self.df2b, self.df2b_long, self.df2b_desc, self.df_intext, self.df_intext_desc = self.import_data()
@@ -163,7 +165,8 @@ class DataAnalysis:
 
         return df1, df1_long, df1_desc, df2a, df2a_desc, df2b, df2b_long, df2b_desc, df_intext, df_intext_desc
 
-    def plot_figure1(self, show_boxplot=True, max_y=None, iqr_mult=1.5, only_outliers=True, big_repeats=True):
+    def plot_figure1(self, show_boxplot=True, max_y=None, iqr_mult=1.5, marker_size=8,
+                     only_outliers=True, big_repeats=False, shade_repeats=True):
 
         # Finds repeat outliers ---------------------------
         df_outliers = pd.DataFrame(self.df1["Participant"])
@@ -171,8 +174,8 @@ class DataAnalysis:
         for col in self.df1.columns[1:]:
             d = self.df1[col]
 
-            min_val = d.median() - iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
-            max_val = d.median() + iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
+            min_val = d.describe().loc["25%"] - iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
+            max_val = d.describe().loc["75%"] + iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
 
             df_outliers[col] = [i > max_val or i < min_val for i in d]
 
@@ -180,13 +183,21 @@ class DataAnalysis:
                                          for j in range(df_outliers.shape[0])]
 
         if not big_repeats:
-            df_outliers["RepeatOffender"] = [False for i in range(df_outliers.shape[0])]
+            df_outliers["BigIcon"] = [False for i in range(df_outliers.shape[0])]
+        if big_repeats:
+            df_outliers["BigIcon"] = df_outliers["RepeatOffender"]
+
+        if not shade_repeats:
+            df_outliers["ShadeIcon"] = [False for i in range(df_outliers.shape[0])]
+        if shade_repeats:
+            df_outliers["ShadeIcon"] = df_outliers["RepeatOffender"]
 
         # Plotting ----------------------------------------
         outlier_dict = {}
-        markers = ["o", "v", "s", "+", "P", "D", "^", "x"]
+        markers = ["o", "v", "s", "p", "P", "D", "^", "x"]
+        marker_sizes = {"o": .95, "p": 1.1, "v": 1.1, "s": .8, "P": 1.1, "D": .8, "^": .9}
 
-        plt.subplots(1, figsize=(10, 6))
+        plt.subplots(1, figsize=self.fig_size)
 
         colors = ['red', 'orange', 'yellow', 'green', 'dodgerblue']
         line_x = -.25
@@ -206,8 +217,8 @@ class DataAnalysis:
                 desc = self.df1[colname].describe()
                 iqr = desc.loc["75%"] - desc.loc["25%"]
 
-                lim_high = iqr * iqr_mult + self.df1[colname].median()
-                lim_low = data.df1[colname].median() - iqr * iqr_mult
+                lim_high = iqr * iqr_mult + desc.loc["75%"]
+                lim_low = desc.loc["25%"] - iqr * iqr_mult
 
                 for val, subj in zip(self.df1[colname], self.df1["Participant"]):
                     if val > lim_high or val < lim_low:
@@ -215,14 +226,21 @@ class DataAnalysis:
                             outlier_dict[subj] = markers[0]
                             markers.pop(0)
 
-                        plt.plot(i, val, marker=outlier_dict[subj], color='black', zorder=1,
-                                 markeredgecolor='black', markerfacecolor='white',
-                                 markersize=9 if df_outliers.loc[df_outliers["Participant"] == subj]["RepeatOffender"].iloc[0]
-                                 else 5)
+                        if big_repeats:
+                            plt.plot(i, val, marker=outlier_dict[subj], color='black', zorder=1,
+                                     markeredgecolor='black', markerfacecolor='white',
+                                     markersize=marker_size if df_outliers.loc[df_outliers["Participant"] == subj]["BigIcon"].iloc[0]
+                                     else marker_size * .66)
+                        if shade_repeats:
+                            plt.plot(i, val, marker=outlier_dict[subj], color='black', zorder=1,
+                                     markeredgecolor='black',
+                                     markerfacecolor='darkgray' if df_outliers.loc[df_outliers["Participant"] == subj]["ShadeIcon"].iloc[0]
+                                     else 'white',
+                                     markersize=marker_size * marker_sizes[outlier_dict[subj][0]])
 
             if not only_outliers:
-                plt.scatter([i for j in range(data.df1.shape[0])], data.df1[colname],
-                         color='grey', edgecolor='black', zorder=1)
+                plt.scatter([i for j in range(self.df1.shape[0])], self.df1[colname],
+                            color='grey', edgecolor='black', zorder=1)
 
             if not show_boxplot:
                 plt.plot([line_x, line_x + .5], [self.df1[colname].median(), self.df1[colname].median()], 'k-', lw=2)
@@ -239,8 +257,8 @@ class DataAnalysis:
 
         plt.xticks([0, 1, 2, 3, 4], ["Left Ankle", "Right Ankle", "Left Wrist", "Right Wrist", "Chest"])
 
-    def plot_figure2a(self, label_subjs=False, show_boxplot=True, y_max=None, iqr_mult=1.5,
-                      only_outliers=True, big_repeats=True):
+    def plot_figure2a(self, label_subjs=False, show_boxplot=True, y_max=None, iqr_mult=1.5, marker_size=8,
+                      only_outliers=True, big_repeats=False, shade_repeats=True, jitter=True):
 
         # Finds repeat outliers ---------------------------
         df_outliers = pd.DataFrame(self.df2a["Participant"])
@@ -248,8 +266,8 @@ class DataAnalysis:
         for col in self.df2a.columns[1:]:
             d = self.df2a[col]
 
-            min_val = d.median() - iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
-            max_val = d.median() + iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
+            min_val = d.describe().loc["25%"] - iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
+            max_val = d.describe().loc["75%"] + iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
 
             df_outliers[col] = [i > max_val or i < min_val for i in d]
 
@@ -257,12 +275,24 @@ class DataAnalysis:
                                          for j in range(df_outliers.shape[0])]
 
         if not big_repeats:
-            df_outliers["RepeatOffender"] = [False for i in range(df_outliers.shape[0])]
+            df_outliers["BigIcon"] = [False for i in range(df_outliers.shape[0])]
+            rep_size_mult = 1
+        if big_repeats:
+            df_outliers["BigIcon"] = df_outliers["RepeatOffender"]
+            rep_size_mult = .66
 
-        plt.subplots(1, figsize=(5, 6))
+        if not shade_repeats:
+            df_outliers["ShadeIcon"] = [False for i in range(df_outliers.shape[0])]
+        if shade_repeats:
+            df_outliers["ShadeIcon"] = df_outliers["RepeatOffender"]
+
+        plt.subplots(1, figsize=self.fig_size)
 
         outlier_dict = {}
-        markers = ["o", "v", "s", "P", "D", "^"]
+
+        markers = ["o", "v", "s", "p", "P", "D", "^", "X", ">", "<"]
+        marker_sizes = {"o": .95, "p": 1.1, "v": 1.1, "s": .8, "P": 1.1, "D": .8, "^": .9, "<": 1, ">": 1, "X": 1.2}
+
         plot_color = 'white'
 
         if show_boxplot:
@@ -275,33 +305,43 @@ class DataAnalysis:
 
         if not label_subjs:
             line_x = -.25
-            for time, color in zip(["Day", "Night"], ['white', 'white']):
+
+            for ind, time in enumerate(["Day", "Night"]):
 
                 if only_outliers:
                     desc = self.df2a[time].describe()
                     iqr = desc.loc["75%"] - desc.loc["25%"]
 
-                    lim_high = iqr * iqr_mult + self.df2a[time].median()
-                    lim_low = self.df2a[time].median() - iqr * iqr_mult
+                    lim_high = iqr * iqr_mult + self.df2a[time].describe()["75%"]
+                    lim_low = self.df2a[time].describe()["25%"] - iqr * iqr_mult
 
                     for val, subj in zip(self.df2a[time], self.df2a["Participant"]):
                         if val > lim_high or val < lim_low:
                             if subj not in outlier_dict.keys():
 
                                 if len(markers) == 0:
-                                    markers = ["o", "v", "s", "P", "D", "^", "x"]
-                                    plot_color = 'grey'
+                                    markers = ["o", "v", "s", "p", "P", "D", "^", "X", ">", "<"]
+                                    plot_color = 'darkgrey'
 
                                 outlier_dict[subj] = [markers[0], plot_color]
                                 markers.pop(0)
 
-                            plt.plot(time, val, marker=outlier_dict[subj][0], color='black', zorder=1,
-                                     markeredgecolor='black', markerfacecolor=outlier_dict[subj][1],
-                                     markersize=9 if df_outliers.loc[df_outliers["Participant"] == subj]["RepeatOffender"].iloc[0]
-                                 else 5)
+                            stdev = .05
+                            jit = np.random.randn() * stdev
+
+                            if not jitter:
+                                jit = 0
+
+                            plt.plot(ind + jit, val, marker=outlier_dict[subj][0], color='black', zorder=1,
+                                     markeredgecolor='black',
+                                     markerfacecolor='darkgray' if df_outliers.loc[df_outliers["Participant"] == subj]
+                                     ["ShadeIcon"].iloc[0] else 'white',
+                                     markersize=marker_size * marker_sizes[outlier_dict[subj][0]]
+                                     if df_outliers.loc[df_outliers["Participant"] == subj]["BigIcon"].iloc[0]
+                                     else marker_size * marker_sizes[outlier_dict[subj][0]] * rep_size_mult)
 
                 if not only_outliers:
-                    plt.scatter([time for i in range(self.df2a.shape[0])], self.df2a[time], color=color,
+                    plt.scatter([time for i in range(self.df2a.shape[0])], self.df2a[time], color='darkgrey',
                                 edgecolor='black')
 
                 if not show_boxplot:
@@ -322,8 +362,8 @@ class DataAnalysis:
         if y_max is not None:
             plt.ylim(-2, y_max)
 
-    def plot_figure2b(self, label_subjs=False, show_boxplot=True, y_max=None,
-                      greyscale=True, only_outliers=True, big_repeats=True, iqr_mult=1.5):
+    def plot_figure2b(self, label_subjs=False, show_boxplot=True, y_max=None, shade_repeats=True, marker_size=8,
+                      greyscale=True, only_outliers=True, big_repeats=False, iqr_mult=1.5, show_ind=True):
 
         # Finds repeat outliers ---------------------------
         df_outliers = pd.DataFrame(self.df2b["Participant"])
@@ -331,8 +371,8 @@ class DataAnalysis:
         for col in self.df2b.columns[1:]:
             d = self.df2b[col]
 
-            min_val = d.median() - iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
-            max_val = d.median() + iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
+            min_val = d.describe().loc["25%"] - iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
+            max_val = d.describe().loc["75%"] + iqr_mult * (d.describe().loc["75%"] - d.describe().loc["25%"])
 
             df_outliers[col] = [i > max_val or i < min_val for i in d]
 
@@ -340,14 +380,29 @@ class DataAnalysis:
                                          for j in range(df_outliers.shape[0])]
 
         if not big_repeats:
-            df_outliers["RepeatOffender"] = [False for i in range(df_outliers.shape[0])]
+            df_outliers["BigIcon"] = [False for i in range(df_outliers.shape[0])]
+            rep_size_mult = 1
+        if big_repeats:
+            df_outliers["BigIcon"] = df_outliers["RepeatOffender"]
+            rep_size_mult = .66
 
-        plt.subplots(1, figsize=(10, 6))
+        if not shade_repeats:
+            df_outliers["ShadeIcon"] = [False for i in range(df_outliers.shape[0])]
+        if shade_repeats:
+            df_outliers["ShadeIcon"] = df_outliers["RepeatOffender"]
+
+        plt.subplots(1, figsize=self.fig_size)
 
         line_x = -.25
 
         outlier_dict = {}
-        markers = ["o", "v", "s", "P", "D", "^"]
+
+        if show_ind:
+            markers = ["o", "v", "s", "P", "D", "^"]
+        if not show_ind:
+            markers = ["o"]
+
+        marker_sizes = {"o": 1, "v": .8, "s": .8, "P": 1.07, "D": .7, "^": .9}
         plot_color = 'white'
 
         if show_boxplot:
@@ -371,24 +426,33 @@ class DataAnalysis:
                     desc = self.df2b[day].describe()
                     iqr = desc.loc["75%"] - desc.loc["25%"]
 
-                    lim_high = iqr * iqr_mult + self.df2b[day].median()
-                    lim_low = self.df2b[day].median() - iqr * iqr_mult
+                    lim_high = iqr * iqr_mult + desc.loc["75%"]
+                    lim_low = desc.loc["25%"] - iqr * iqr_mult
 
                     for val, subj in zip(self.df2b[day], self.df2b["Participant"]):
                         if val > lim_high or val < lim_low:
                             if subj not in outlier_dict.keys():
 
                                 if len(markers) == 0:
-                                    markers = ["o", "v", "s", "P", "D", "^", "x"]
+                                    if show_ind:
+                                        markers = ["o", "v", "s", "P", "D", "^"]
+                                    if not show_ind:
+                                        markers = ["o"]
+
                                     plot_color = 'grey'
 
                                 outlier_dict[subj] = [markers[0], plot_color]
                                 markers.pop(0)
 
-                            plt.plot(day, val, marker=outlier_dict[subj][0], color='black', zorder=1,
-                                     markeredgecolor='black', markerfacecolor=outlier_dict[subj][1],
-                                     markersize=9 if df_outliers.loc[df_outliers["Participant"] == subj]
-                                     ["RepeatOffender"].iloc[0] else 5)
+                            plt.plot(day, val,
+                                     marker=outlier_dict[subj][0], color='black', zorder=1,
+                                     markeredgecolor='black',
+                                     markerfacecolor='darkgray' if df_outliers.loc[df_outliers["Participant"] == subj]
+                                     ["ShadeIcon"].iloc[0] else 'white',
+                                     markersize=marker_size * marker_sizes[outlier_dict[subj][0]] if
+                                     df_outliers.loc[df_outliers["Participant"] == subj]
+                                     ["BigIcon"].iloc[0]
+                                     else marker_size * marker_sizes[outlier_dict[subj][0]] * rep_size_mult)
 
                 if not only_outliers:
                     plt.scatter([day for i in range(self.df2b.shape[0])], self.df2b[day],
@@ -426,7 +490,8 @@ class DataAnalysis:
         plt.ylabel("Percent Non-Wear")
 
 
-data = DataAnalysis(filename="/Users/kyleweber/Desktop/Data Tables From Adam_11Feb2021.xlsx")
+data = DataAnalysis(filename="/Users/kyleweber/Desktop/Data Tables From Adam_11Feb2021.xlsx",
+                    figsize=(10, 6))
 
 """
 ===================================================== STATISTICS ======================================================
@@ -451,6 +516,8 @@ data = DataAnalysis(filename="/Users/kyleweber/Desktop/Data Tables From Adam_11F
 ===================================================== GRAPHING ========================================================
 """
 
+data.figsize=(10, 6)
+
 """Generates histogram of all non-participant columns in wide-format DF"""
 # generate_histograms(data.df1)
 # generate_histograms(data.df2a)
@@ -469,9 +536,12 @@ data = DataAnalysis(filename="/Users/kyleweber/Desktop/Data Tables From Adam_11F
 # generate_mean_plot(data.df_intext_desc, "std")
 
 """Scatterplots w/ or w/o boxplots"""
-# data.plot_figure1(show_boxplot=True, max_y=None, iqr_mult=1.5, only_outliers=True, big_repeats=False)
-# data.plot_figure2a(label_subjs=False, show_boxplot=True, y_max=60, iqr_mult=1.5, only_outliers=True, big_repeats=True)
-# data.plot_figure2b(label_subjs=False, show_boxplot=True, y_max=None, greyscale=True, only_outliers=True, iqr_mult=1.5, big_repeats=True)
+# data.plot_figure1(show_boxplot=True, max_y=60, iqr_mult=1.5, marker_size=8,
+#                  only_outliers=True, big_repeats=False, shade_repeats=True)
+# data.plot_figure2a(label_subjs=False, show_boxplot=True, y_max=60, iqr_mult=1.5, only_outliers=True,
+#                    big_repeats=False, shade_repeats=True, marker_size=10, jitter=True)
+# data.plot_figure2b(label_subjs=False, show_boxplot=True, y_max=None, greyscale=True, shade_repeats=True,
+#                   only_outliers=True, iqr_mult=1.5, big_repeats=False, marker_size=6, show_ind=True)
 
 """Line graph that connects data from each participant"""
 # data.plot_within(data.df1)
