@@ -5,34 +5,47 @@ from matplotlib.widgets import Button
 import ECG
 import ImportEDF
 from datetime import timedelta
-import statistics
 import matplotlib.dates as mdates
+import os
+from OndriAtHome.BintoEDFConversion.ga_to_edf import ga_to_edf
+
+save_folder = "/Users/kyleweber/Desktop/Converted/"
+log_file = "/Users/kyleweber/Desktop/Out.xlsx"
+
+wrist_edf = "/Users/kyleweber/Desktop/Kin472_Megan/Converted/Run_GENEActiv_Accelerometer_LW.edf"
+ankle_edf = "/Users/kyleweber/Desktop/Kin472_Megan/Converted/Run_GENEActiv_Accelerometer_LA.edf"
+lead_file = "/Users/kyleweber/Desktop/Kin472_Megan/Converted/Run_3lead.edf"
+ff_file = "/Users/kyleweber/Desktop/Kin472_Megan/Converted/Run_FastFix.edf"
 
 
 class Data:
 
-    def __init__(self, wrist_file=None, ankle_file=None, ecg_file=None,
-                 activity_log=None, sleep_log=None, epoch_len=15):
+    def __init__(self, wrist_file=None, ankle_file=None, ecg_3lead_file=None, ecg_ff_file=None,
+                 activity_log=None, epoch_len=15, pad_pre=0, pad_post=0):
 
         self.wrist_file = wrist_file
         self.ankle_file = ankle_file
-        self.ecg_file = ecg_file
+        self.ecg_lead_file = ecg_3lead_file
+        self.ecg_ff_file = ecg_ff_file
         self.activity_file = activity_log
-        self.sleep_file = sleep_log
         self.epoch_len = epoch_len
         self.accel_fs = 75
+
+        self.pad_pre = pad_pre
+        self.pad_post = pad_post
 
         self.crop_dict = None
         self.wrist = None
         self.ankle = None
-        self.ecg = None
+        self.ecg_lead = None
+        self.ecg_ff = None
 
         self.df_svm = None
-        self.epoch_hr = pd.DataFrame(list(zip([], [], [], [])), columns=["Timestamp", "HR", "%HRR", "HRR_Intensity"])
+        self.epoch_hr = pd.DataFrame(list(zip([], [], [], [], [], [], [])),
+                                     columns=["Timestamp", "HR_Lead", "%HRR_Lead", "HRR_Intensity_Lead",
+                                              "HR_FF", "%HRR_Lead", "HRR_Intensity_FF"])
 
         self.rest_hr = 0
-        self.pad_pre = 0
-        self.pad_post = 0
 
         self.cutpoints = None
 
@@ -44,7 +57,8 @@ class Data:
 
         lw_crop_index = 0
         rw_crop_index = 0
-        ecg_crop_index = 0
+        lead_crop_index = 0
+        ff_crop_index = 0
 
         wrist_starttime, wrist_endtime, wrist_fs, wrist_duration = ImportEDF.check_file(filepath=self.wrist_file,
                                                                                         print_summary=False)
@@ -52,32 +66,53 @@ class Data:
         ankle_starttime, ankle_endtime, ankle_fs, ankle_duration = ImportEDF.check_file(filepath=self.ankle_file,
                                                                                         print_summary=False)
 
-        ecg_starttime, ecg_endtime, ecg_fs, ecg_duration = ImportEDF.check_file(filepath=self.ecg_file,
-                                                                                print_summary=False)
+        l_starttime, l_endtime, l_fs, l_duration = ImportEDF.check_file(filepath=self.ecg_lead_file,
+                                                                        print_summary=False)
 
-        crop_time = max([wrist_starttime, ankle_starttime, ecg_starttime])
+        ff_starttime, ff_endtime, ff_fs, ff_duration = ImportEDF.check_file(filepath=self.ecg_ff_file,
+                                                                            print_summary=False)
 
-        if wrist_starttime < crop_time:
-            lw_crop_index = int((crop_time - wrist_starttime).total_seconds() * wrist_fs)
-        if ankle_starttime < crop_time:
-            rw_crop_index = int((crop_time - ankle_starttime).total_seconds() * ankle_fs)
-        if ecg_starttime < crop_time:
-            ecg_crop_index = int((crop_time - ecg_starttime).total_seconds() * ecg_fs)
+        crop_time = max([i for i in [wrist_starttime, ankle_starttime, l_starttime, ff_starttime] if i is not None])
 
-        self.crop_dict = {"LW": lw_crop_index, "RW": rw_crop_index, "ECG": ecg_crop_index}
+        if wrist_starttime is not None:
+            if wrist_starttime < crop_time:
+                lw_crop_index = int((crop_time - wrist_starttime).total_seconds() * wrist_fs)
+        if ankle_starttime is not None:
+            if ankle_starttime < crop_time:
+                rw_crop_index = int((crop_time - ankle_starttime).total_seconds() * ankle_fs)
+        if l_starttime is not None:
+            if l_starttime < crop_time:
+                lead_crop_index = int((crop_time - l_starttime).total_seconds() * l_fs)
+        if ff_starttime is not None:
+            if ff_starttime < crop_time:
+                ff_crop_index = int((crop_time - ff_starttime).total_seconds() * ff_fs)
 
-        if wrist_fs != ankle_fs:
-            print("\n-Accelerometer sampling rates do not match. Errors will ensue.")
-        if wrist_fs == ankle_fs:
-            self.accel_fs = wrist_fs
+        self.crop_dict = {"LW": lw_crop_index, "RW": rw_crop_index,
+                          "ECG_Lead": lead_crop_index, "ECG_FF": ff_crop_index}
+
+        if wrist_fs is not None and ankle_fs is not None:
+            if wrist_fs != ankle_fs:
+                print("\n-Accelerometer sampling rates do not match. Errors will ensue.")
+            if wrist_fs == ankle_fs:
+                self.accel_fs = wrist_fs
 
     def import_data(self):
         """Imports wrist and ECG data"""
 
-        self.wrist = ImportEDF.GENEActiv(filepath=self.wrist_file, load_raw=True, start_offset=self.crop_dict["LW"])
-        self.ankle = ImportEDF.GENEActiv(filepath=self.ankle_file, load_raw=True, start_offset=self.crop_dict["RW"])
-        self.ecg = ImportEDF.Bittium(filepath=self.ecg_file, load_accel=False, start_offset=self.crop_dict["ECG"],
-                                     epoch_len=self.epoch_len)
+        if self.wrist_file is not None:
+            self.wrist = ImportEDF.GENEActiv(filepath=self.wrist_file,
+                                             load_raw=True, start_offset=self.crop_dict["LW"])
+        if self.ankle_file is not None:
+            self.ankle = ImportEDF.GENEActiv(filepath=self.ankle_file,
+                                             load_raw=True, start_offset=self.crop_dict["RW"])
+        if self.ecg_lead_file is not None:
+            self.ecg_lead = ImportEDF.Bittium(filepath=self.ecg_lead_file, load_accel=False,
+                                              start_offset=self.crop_dict["ECG_Lead"],
+                                              epoch_len=self.epoch_len)
+        if self.ecg_ff_file is not None:
+            self.ecg_ff = ImportEDF.Bittium(filepath=self.ecg_ff_file, load_accel=False,
+                                            start_offset=self.crop_dict["ECG_FF"],
+                                            epoch_len=self.epoch_len)
 
     def scale_cutpoints(self):
         """Scales Duncan et al. (2019) accelerometer cutpoints based on epoch length and sampling rate"""
@@ -142,28 +177,48 @@ class Data:
         timestamps = []
         into_bouts = []
         events = []
-        epoch_hr = []
+        epoch_hr_lead = []
+        epoch_hr_ff = []
         desc = []
 
         for bout in self.df_events.itertuples():
 
+            """3-lead ECG"""
             bout_start = int((bout.Start + timedelta(seconds=-pad_pre) -
-                              self.ecg.timestamps[0]).total_seconds() * self.ecg.sample_rate)
+                              self.ecg_lead.timestamps[0]).total_seconds() * self.ecg_lead.sample_rate)
 
             bout_end = int((bout.Stop + timedelta(seconds=pad_post) -
-                            self.ecg.timestamps[0]).total_seconds() * self.ecg.sample_rate)
+                            self.ecg_lead.timestamps[0]).total_seconds() * self.ecg_lead.sample_rate)
 
-            for i in range(bout_start, bout_end, int(self.ecg.sample_rate * self.epoch_len)):
-                qc = ECG.CheckQuality(raw_data=self.ecg.raw, start_index=i, template_data='filtered',
-                                      voltage_thresh=500, epoch_len=self.epoch_len, sample_rate=self.ecg.sample_rate)
+            for i in range(bout_start, bout_end, int(self.ecg_lead.sample_rate * self.epoch_len)):
+                qc = ECG.CheckQuality(raw_data=self.ecg_lead.raw, start_index=i, template_data='filtered',
+                                      voltage_thresh=250, epoch_len=self.epoch_len,
+                                      sample_rate=self.ecg_lead.sample_rate)
 
                 if qc.valid_period:
-                    epoch_hr.append(qc.hr)
+                    epoch_hr_lead.append(qc.hr)
                 if not qc.valid_period:
-                    epoch_hr.append(None)
+                    epoch_hr_lead.append(None)
+
+            """FastFix ECG"""
+            bout_start = int((bout.Start + timedelta(seconds=-pad_pre) -
+                              self.ecg_ff.timestamps[0]).total_seconds() * self.ecg_ff.sample_rate)
+
+            bout_end = int((bout.Stop + timedelta(seconds=pad_post) -
+                            self.ecg_ff.timestamps[0]).total_seconds() * self.ecg_ff.sample_rate)
+
+            for i in range(bout_start, bout_end, int(self.ecg_ff.sample_rate * self.epoch_len)):
+                qc = ECG.CheckQuality(raw_data=self.ecg_ff.raw, start_index=i, template_data='filtered',
+                                      voltage_thresh=250, epoch_len=self.epoch_len,
+                                      sample_rate=self.ecg_ff.sample_rate)
+
+                if qc.valid_period:
+                    epoch_hr_ff.append(qc.hr)
+                if not qc.valid_period:
+                    epoch_hr_ff.append(None)
 
             df = self.df_svm.loc[(self.df_svm["Timestamp"] >= bout.Start + timedelta(seconds=-pad_pre)) &
-                                 (self.df_svm["Timestamp"] < bout.Stop +timedelta(seconds=pad_post))]
+                                 (self.df_svm["Timestamp"] < bout.Stop + timedelta(seconds=pad_post))]
 
             stamps = pd.date_range(start=bout.Start + timedelta(seconds=-pad_pre),
                                    end=bout.Stop + timedelta(seconds=pad_post + self.epoch_len),
@@ -191,14 +246,14 @@ class Data:
         epoch = pd.DataFrame(list(zip(timestamps,
                                       [round(i, 2) for i in wrist_svm],
                                       [round(i, 2) for i in ankle_svm],
-                                      [round(i, 1) if i is not None else None for i in epoch_hr],
-                                      desc, into_bouts,
-                                      events)),
-                             columns=["Timestamp", "Wrist_SVM", "Ankle_SVM", "HR", "Timing",
+                                      [round(i, 1) if i is not None else None for i in epoch_hr_lead],
+                                      [round(i, 1) if i is not None else None for i in epoch_hr_ff],
+                                      desc, into_bouts, events)),
+                             columns=["Timestamp", "Wrist_SVM", "Ankle_SVM", "HR_Lead", "HR_FF", "Timing",
                                       "Time_into_bout", "Activity"])
 
         self.df_active = epoch[["Timestamp", "Activity", "Timing", "Time_into_bout",
-                                "Wrist_SVM", "Ankle_SVM", "HR"]]
+                                "Wrist_SVM", "Ankle_SVM", "HR_Lead", "HR_FF"]]
 
     def calculate_accel_intensity(self):
         """Calculates wrist and ankle intensity using Duncan et al. (2019) cutpoints."""
@@ -224,42 +279,41 @@ class Data:
         self.df_active["Wrist_Intensity"] = wrist
         self.df_active["Ankle_Intensity"] = ankle
 
-    def find_resting_hr(self, rest_hr=None, window_size=60, n_windows=30, sleep_log=None):
+    def find_resting_hr(self, rest_hr=None, ecg_type="lead"):
         """Function that calculates resting HR based on inputs.
            Able to input a resting HR value to skip ECG processing.
 
         :argument
         -rest_hr: int/float if already calculated; will skip ECG processing
             -If None, will perform ECG processing
-        -sleep_log: pathway to sleep log
-            -If None, will (obviously) not remove sleep periods --> lower resting HR
-        -window_size: size of window over which rolling average is calculated, seconds
-        -n_windows: number of epochs over which resting HR is averaged (lowest n_windows number of epochs)
-        -sleep_status: data from class Sleep that corresponds to asleep/awake epochs
         """
 
-        # Sets integer for window length based on window_size and epoch_len
-        window_len = int(window_size / self.epoch_len)
+        if ecg_type.capitalize() == "Lead":
+            ecg = self.ecg_lead
+            ecg_name = "_Lead"
+        if ecg_type == "ff" or ecg_type == "fastfix":
+            ecg = self.ecg_ff
+            ecg_name = "_FF"
 
-        if rest_hr is not None:
-            print("\n-Setting resting HR to {} bpm.".format(rest_hr))
-            self.rest_hr = rest_hr
+        def hr_from_raw(start_ind=0, stop_ind=None):
 
-        if rest_hr is None:
+            # Runs QC algorithm and calculates epoch HRs ----------------------------------------------------------
+            print("\nRunning ECG quality check algorithm to find resting HR...")
 
-            # Runs QC algorithm and calculates epoch HRs --------------------------------------------------------------
-            print("\nRunning ECG quality check algorithm on whole data file to find resting HR...")
+            if stop_ind == 0:
+                stop_ind = len(ecg.raw)
 
-            markers = np.arange(0, len(self.ecg.raw) * 1.1, len(self.ecg.raw)/10)
+            markers = np.arange(start_ind, stop_ind * 1.1, (stop_ind - start_ind) / 10)
             marker_ind = 0
 
             epoch_hr = []
-            for i in range(0, len(self.ecg.raw), int(self.ecg.sample_rate * self.epoch_len)):
-                qc = ECG.CheckQuality(raw_data=self.ecg.raw, start_index=i, template_data='filtered',
-                                      voltage_thresh=500, epoch_len=self.epoch_len, sample_rate=self.ecg.sample_rate)
+            for i in range(start_ind, stop_ind, int(ecg.sample_rate * self.epoch_len)):
+                qc = ECG.CheckQuality(raw_data=ecg.raw, start_index=i, template_data='filtered',
+                                      voltage_thresh=250, epoch_len=self.epoch_len,
+                                      sample_rate=ecg.sample_rate)
 
                 if i >= markers[marker_ind]:
-                    print("{}% complete".format(marker_ind*10))
+                    print("{}% complete".format(marker_ind * 10))
                     marker_ind += 1
 
                 if qc.valid_period:
@@ -269,84 +323,75 @@ class Data:
 
             print("100% complete")
 
-            self.epoch_hr = pd.DataFrame(list(zip(pd.date_range(start=self.ecg.timestamps[0], end=self.ecg.timestamps[-1],
-                                                             freq="{}S".format(self.epoch_len)),
-                                                  [round(i, 1) if i is not None else None for i in epoch_hr])),
-                                         columns=["Timestamp", "HR"])
+            if self.epoch_hr is None:
+                self.epoch_hr = pd.DataFrame(list(zip(pd.date_range(start=ecg.timestamps[0],
+                                                                    end=ecg.timestamps[-1],
+                                                                    freq="{}S".format(self.epoch_len)),
+                                                      [round(i, 1) if i is not None else None for i in epoch_hr])),
+                                             columns=["Timestamp", "HR" + ecg_name])
 
-            # Calculates resting HR -----------------------------------------------------------------------------------
-            try:
-                rolling_avg = [statistics.mean(epoch_hr[i:i + window_len]) if None not in epoch_hr[i:i + window_len]
-                               else None for i in range(len(epoch_hr))]
-            except statistics.StatisticsError:
-                print("No data points found.")
-                rolling_avg = []
+            if self.epoch_hr is not None:
+                self.epoch_hr["HR" + ecg_name] = [round(i, 1) if i is not None else None for i in epoch_hr]
 
-            # Calculates resting HR during waking hours if sleep_log available --------
-            if sleep_log is not None:
-                print("\nCalculating resting HR from periods of wakefulness...")
+            valid_hr = [i for i in epoch_hr if i is not None]
 
-                # Flags sleep epochs from log
-                df_sleep = pd.read_excel("/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Sleep.xlsx")
-                df_sleep = df_sleep.loc[df_sleep["Subject"] == subj_id]
+            resting_hr = round(sum(valid_hr) / len(valid_hr), 1)
 
-                sleep_ind = [int((row.Sleep - self.wrist.timestamps[0]).total_seconds() / self.epoch_len) for row in
-                             df_sleep.itertuples()]
-                wake_ind = [int((row.Wake - self.wrist.timestamps[0]).total_seconds() / self.epoch_len) for row in
-                            df_sleep.itertuples()]
-
-                sleep_list = np.zeros(int(len(self.wrist.timestamps) / self.wrist.sample_rate / self.epoch_len))
-
-                for s, w in zip(sleep_ind, wake_ind):
-                    sleep_list[s:w] = 1
-
-                awake_hr = [rolling_avg[i] for i in range(0, min([len(sleep_list), len(rolling_avg)]))
-                            if sleep_list[i] == 0 and rolling_avg[i] is not None]
-
-                sorted_hr = sorted(awake_hr)
-
-                if len(sorted_hr) < n_windows:
-                    resting_hr = "N/A"
-
-                if len(sorted_hr) >= n_windows:
-                    resting_hr = round(sum(sorted_hr[:n_windows]) / n_windows, 1)
-
-                print("Resting HR (average of {} lowest {}-second periods while awake) is {} bpm.".format(n_windows,
-                                                                                                          window_size,
-                                                                                                          resting_hr))
-
-            # Calculates resting HR during all hours if sleep_log not available --------
-            if sleep_log is None:
-                # print("\n" + "Calculating resting HR from periods of all data (sleep data not available)...")
-
-                awake_hr = None
-
-                valid_hr = [i for i in rolling_avg if i is not None]
-
-                sorted_hr = sorted(valid_hr)
-
-                resting_hr = round(sum(sorted_hr[:n_windows]) / n_windows, 1)
-
-                print("Resting HR (sleep not removed; average of {} lowest "
-                      "{}-second periods) is {} bpm.".format(n_windows, window_size, resting_hr))
+            print("Average HR from designated period is {} bpm.".format(resting_hr))
 
             self.rest_hr = resting_hr
 
-    def calculate_hrr(self, age=30):
+        if rest_hr is not None:
+            print("\n-Setting resting HR to {} bpm.".format(rest_hr))
+            self.rest_hr = rest_hr
+
+        if rest_hr is None:
+            if "Resting HR" not in [i for i in self.df_events["Event"]]:
+                print("\nNo resting HR event found in event file.")
+                print("Please ensure there is an event called 'Resting HR' and try again.")
+                return None
+
+            if "Resting HR" in [i for i in self.df_events["Event"]]:
+                start_index = int((self.df_events[self.df_events["Event"] == "Resting HR"]["Start"].iloc[0] -
+                                   ecg.timestamps[0]).total_seconds() * ecg.sample_rate)
+                stop_index = int((self.df_events[self.df_events["Event"] == "Resting HR"]["Stop"].iloc[0] -
+                                  ecg.timestamps[0]).total_seconds() * ecg.sample_rate)
+
+                hr_from_raw(start_ind=start_index, stop_ind=stop_index)
+
+    def calculate_hrr(self, age=30, ecg_type="lead"):
         """Uses predicted max HR and measured resting HR to quantify %HRR data.
 
             :argument
             -age: participant age in years
         """
 
-        print("\nCalculating %HRR data...")
+        if ecg_type.capitalize() == "Lead":
+            ecg = "_Lead"
+        if ecg_type == "ff":
+            ecg = "_FF"
+
+        print("\nCalculating %HRR data (Resting HR = {}, age = {} years)...".format(self.rest_hr, age))
 
         hrr = (208 - .7 * age - self.rest_hr)
 
         # HR during activities ----------------------------------------------------------------------------------------
         hrr_list = [round((hr - self.rest_hr) / hrr * 100, 1) if not np.isnan(hr) else None
-                    for hr in self.df_active["HR"]]
-        self.df_active["%HRR"] = hrr_list
+                    for hr in self.df_active["HR" + ecg]]
+
+        hrr_list2 = []
+        for i in hrr_list:
+            if i is None:
+                hrr_list2.append(None)
+            if i is not None:
+                if i < 0:
+                    hrr_list2.append(0)
+                if i >= 0:
+                    hrr_list2.append(i)
+
+        hrr_list = hrr_list2
+
+        self.df_active["%HRR" + ecg] = hrr_list
 
         hrr_intensity = []
 
@@ -361,12 +406,12 @@ class Data:
                 if hr >= 40:
                     hrr_intensity.append("Moderate")
 
-        self.df_active["HRR_Intensity"] = hrr_intensity
+        self.df_active["HRR_Intensity" + ecg] = hrr_intensity
 
         # HR during all data ------------------------------------------------------------------------------------------
         hrr_list = [round((hr - self.rest_hr) / hrr * 100, 1) if not np.isnan(hr) else None
-                    for hr in self.epoch_hr["HR"]]
-        self.epoch_hr["%HRR"] = hrr_list
+                    for hr in self.epoch_hr["HR" + ecg]]
+        self.epoch_hr["%HRR" + ecg] = hrr_list
 
         hrr_intensity = []
 
@@ -381,97 +426,126 @@ class Data:
                 if hr >= 40:
                     hrr_intensity.append("Moderate")
 
-        self.epoch_hr["HRR_Intensity"] = hrr_intensity
+        self.epoch_hr["HRR_Intensity" + ecg] = hrr_intensity
 
-    def plot_all_data(self, start=None, stop=None, save_image=False, image_path=None):
+        print("Complete.")
+
+    def plot_all_data(self, start=None, stop=None, save_image=False, image_path=None, hr_type='HR'):
         """Able to plot specified sections of data. Shades long walking bouts. Able to save.
 
             :argument
             -start/stop: timestamp or None to crop data
             -save_image: boolean. If True, saves image to path specified by image_path
             -image_path: save location and filename of image
+            -hr_type: "HR" or "%HRR"
         """
 
-        if self.epoch_hr.shape[0] == 0:
-            df_hr = self.df_active
-        if self.epoch_hr.shape[0] > 0:
-            df_hr = self.epoch_hr
+        n_plots = len([i for i in [self.wrist_file, self.ankle_file] if i is not None]) + \
+                  1 if not None in [i for i in [self.ecg_lead, self.ecg_ff] if i is not None] else 0
 
-        fig, (ax1, ax2, ax3) = plt.subplots(3, sharex='col', figsize=(10, 6))
+        fig, axes = plt.subplots(n_plots, sharex='col', figsize=(10, 6))
 
-        ax1.plot(self.df_svm["Timestamp"], self.df_svm["Wrist_SVM"], color='black')
-        ax1.set_title("Wrist")
-        ax1.set_ylabel("Counts")
+        if self.wrist_file is not None:
+            axes[0].plot(self.df_svm["Timestamp"], self.df_svm["Wrist_SVM"], color='black')
+            axes[0].set_title("Wrist")
+            axes[0].set_ylabel("Counts")
 
-        ax2.plot(self.df_svm["Timestamp"], self.df_svm["Ankle_SVM"], color='black')
-        ax2.set_title("Ankle")
-        ax2.set_ylabel("Counts")
+        if self.ankle_file is not None:
+            axes[1].plot(self.df_svm["Timestamp"], self.df_svm["Ankle_SVM"], color='black')
+            axes[1].set_title("Ankle")
+            axes[1].set_ylabel("Counts")
 
-        ax3.plot(df_hr["Timestamp"], df_hr['%HRR'], color='black')
-        ax3.set_ylabel("%HRR")
-        ax3.set_title("Heart Rate")
+        if self.ecg_lead is not None:
+            axes[2].plot(self.df_active["Timestamp"], self.df_active[hr_type + "_Lead"],
+                         color='black', label="Lead", linestyle="", marker="o", markersize=4)
+            axes[2].set_ylabel(hr_type)
+            axes[2].set_title("Heart Rate")
 
-        ax4 = ax3.twinx()
-        ax4.plot(df_hr['Timestamp'], df_hr["HR"], linestyle="")
-        ax4.set_ylabel("HR (bpm)")
-        ax4.axhline(self.rest_hr, linestyle='dashed', color='red')
+            axes[2].axhline(self.rest_hr, linestyle='dashed', color='green')
+            axes[2].legend()
+
+        if self.ecg_ff is not None:
+            axes[2].plot(self.df_active["Timestamp"], self.df_active[hr_type + "_FF"],
+                         color='red', label="FastFix", linestyle="", marker="o", markersize=4)
+            axes[2].set_ylabel(hr_type)
+            axes[2].set_title("Heart Rate")
+
+            axes[2].legend()
 
         xfmt = mdates.DateFormatter("%Y/%m/%d\n%H:%M:%S")
-        ax4.xaxis.set_major_formatter(xfmt)
+        axes[-1].xaxis.set_major_formatter(xfmt)
         plt.xticks(rotation=45, fontsize=7)
 
         for row in self.df_events.itertuples():
             # Shades activities in green
-            ax1.fill_between(x=[row.Start, row.Stop], y1=0, y2=max(self.df_svm["Wrist_SVM"]),
-                             color='green', alpha=.5)
-            ax2.fill_between(x=[row.Start, row.Stop], y1=0, y2=max(self.df_svm["Ankle_SVM"]),
-                             color='green', alpha=.5)
-            ax3.fill_between(x=[row.Start, row.Stop],
-                             y1=0, y2=max([i for i in df_hr["%HRR"] if not np.isnan(i)]), color='green', alpha=.5)
+
+            if self.wrist_file is not None:
+                axes[0].fill_between(x=[row.Start, row.Stop], y1=0, y2=max(self.df_svm["Wrist_SVM"]),
+                                     color='green', alpha=.5)
+            if self.ankle_file is not None:
+                axes[1].fill_between(x=[row.Start, row.Stop], y1=0, y2=max(self.df_svm["Ankle_SVM"]),
+                                     color='green', alpha=.5)
+            if self.ecg_lead is not None or self.ecg_ff is not None:
+                axes[2].fill_between(x=[row.Start, row.Stop],
+                                     y1=0, y2=max([i for i in self.df_active[hr_type + "_Lead"] if not np.isnan(i)]),
+                                     color='green', alpha=.5)
 
             # Shades padded area in red
-            ax1.fill_between(x=[row.Start + timedelta(seconds=-self.pad_pre), row.Start],
-                             y1=0, y2=max(self.df_svm["Wrist_SVM"]), color='grey', alpha=.5)
-            ax1.fill_between(x=[row.Stop, row.Stop + timedelta(seconds=self.pad_post)],
-                             y1=0, y2=max(self.df_svm["Wrist_SVM"]), color='orange', alpha=.5)
+            if self.wrist_file is not None:
+                axes[0].fill_between(x=[row.Start + timedelta(seconds=-self.pad_pre), row.Start],
+                                     y1=0, y2=max(self.df_svm["Wrist_SVM"]), color='grey', alpha=.5)
+                axes[0].fill_between(x=[row.Stop, row.Stop + timedelta(seconds=self.pad_post)],
+                                     y1=0, y2=max(self.df_svm["Wrist_SVM"]), color='orange', alpha=.5)
 
-            ax2.fill_between(x=[row.Start + timedelta(seconds=-self.pad_pre), row.Start],
-                             y1=0, y2=max(self.df_svm["Ankle_SVM"]), color='grey', alpha=.5)
-            ax2.fill_between(x=[row.Stop, row.Stop + timedelta(seconds=self.pad_post)],
-                             y1=0, y2=max(self.df_svm["Ankle_SVM"]), color='orange', alpha=.5)
+            if self.ankle_file is not None:
+                axes[1].fill_between(x=[row.Start + timedelta(seconds=-self.pad_pre), row.Start],
+                                     y1=0, y2=max(self.df_svm["Ankle_SVM"]), color='grey', alpha=.5)
+                axes[1].fill_between(x=[row.Stop, row.Stop + timedelta(seconds=self.pad_post)],
+                                     y1=0, y2=max(self.df_svm["Ankle_SVM"]), color='orange', alpha=.5)
 
-            ax3.fill_between(x=[row.Start + timedelta(seconds=-self.pad_pre), row.Start],
-                             y1=0, y2=max([i for i in df_hr["%HRR"] if not np.isnan(i)]), color='grey', alpha=.5)
-            ax3.fill_between(x=[row.Stop, row.Stop + timedelta(seconds=self.pad_post)],
-                             y1=0, y2=max([i for i in df_hr["%HRR"] if not np.isnan(i)]), color='orange', alpha=.5)
+            if self.ecg_lead is not None or self.ecg_ff is not None:
+                axes[2].fill_between(x=[row.Start + timedelta(seconds=-self.pad_pre), row.Start],
+                                     y1=0, y2=max([i for i in self.df_active[hr_type + "_Lead"] if not np.isnan(i)]),
+                                     color='grey', alpha=.5)
+                axes[2].fill_between(x=[row.Stop, row.Stop + timedelta(seconds=self.pad_post)],
+                                     y1=0, y2=max([i for i in self.df_active[hr_type + "_Lead"] if not np.isnan(i)]),
+                                     color='orange', alpha=.5)
 
         if start is None and stop is None:
             pass
         if start is not None and stop is not None:
-            ax4.set_xlim(start, stop)
+            axes[-1].set_xlim(start, stop)
 
-            ax1.set_ylim(ax1.get_ylim()[0], max(self.df_svm.loc[(self.df_svm["Timestamp"] >= start) &
-                                                                (self.df_svm["Timestamp"] < stop)]["Wrist_SVM"])*1.1)
-            ax2.set_ylim(ax2.get_ylim()[0], max(self.df_svm.loc[(self.df_svm["Timestamp"] >= start) &
-                                                                (self.df_svm["Timestamp"] < stop)]["Ankle_SVM"])*1.1)
+            if self.wrist_file is not None:
+                axes[0].set_ylim(axes[0].get_ylim()[0],
+                                 max(self.df_svm.loc[(self.df_svm["Timestamp"] >= start) &
+                                                     (self.df_svm["Timestamp"] < stop)]["Wrist_SVM"])*1.1)
+            if self.ankle_file is not None:
+                axes[1].set_ylim(axes[1].get_ylim()[0],
+                                 max(self.df_svm.loc[(self.df_svm["Timestamp"] >= start) &
+                                                     (self.df_svm["Timestamp"] < stop)]["Ankle_SVM"])*1.1)
 
         if save_image:
             plt.savefig(image_path)
 
-    def generate_activity_images(self, image_path="/Users/kyleweber/Desktop/Student Supervision/{}_Event{}_{}.png"):
+    def generate_activity_images(self, image_path):
         """Loops through long walks and calls self.plot_longwalk_data for specified region of data. Saves images.
 
         :argument
         -image_path: pathway where image(s) are saved. Include {} for walk index.
         """
 
+        print("\nSaving images of data for all events...")
+
         for row in self.df_events.itertuples():
             plt.close('all')
             self.plot_all_data(start=row.Start + timedelta(seconds=-1.1 * self.pad_pre),
                                stop=row.Stop + timedelta(seconds=1.1 * self.pad_post),
                                save_image=True,
-                               image_path=image_path.format(subj_id, row.Index + 1, row.Event))
+                               image_path=image_path.format(row.Index + 1, row.Event))
             plt.close('all')
+
+        print("Complete.")
 
     def save_data(self, pathway=""):
         """Saves relevant data to Excel files.
@@ -482,32 +556,50 @@ class Data:
 
         print("\nSaving relevant data to {}..".format(pathway))
 
-        self.df_active.to_excel(pathway + "{}_Activity_Data.xlsx".format(subj_id), index=False)
+        self.df_active.to_excel(pathway + "Activity_Data.xlsx", index=False)
 
 
 class DataVisualizer:
 
-    def __init__(self, output_folder):
+    def __init__(self, data_obj=None, epoched_file=None, output_filename=None):
 
-        self.output_folder = output_folder
+        self.data = data_obj
+        self.df_epoch = None
+
+        if epoched_file is not None:
+            self.df_epoch = pd.read_csv(epoched_file)
+            self.df_epoch["Timestamp"] = pd.to_datetime(self.df_epoch["Timestamp"])
+            self.df_epoch.columns = ["Timestamp", "Wrist_SVM", "Wrist_AVM", "Ankle_SVM", "Ankle_AVM", "WristIntensity"]
+
+        self.filename = output_filename
         self.timestamps = []
         self.ax1 = None
+        self.ax2 = None
 
         self.gen_plot()
 
     def gen_plot(self):
 
-        fig, (self.ax1, ax2) = plt.subplots(2, figsize=(10, 6), sharex='col')
+        fig, (self.ax1, self.ax2) = plt.subplots(2, figsize=(10, 6), sharex='col')
         plt.subplots_adjust(bottom=.15)
+        plt.suptitle("Use controls to show full activity on screen and hit 'Add' to save timestamps")
 
-        self.ax1.plot(x.df_svm["Timestamp"], x.df_svm["Wrist_SVM"], color='dodgerblue', label='Wrist')
+        if self.data is not None:
+            self.ax1.plot(self.data.df_svm["Timestamp"], self.data.df_svm["Wrist_SVM"],
+                          color='dodgerblue', label='Wrist')
+            self.ax2.plot(self.data.df_svm["Timestamp"], self.data.df_svm["Ankle_SVM"],
+                          color='red', label='Ankle')
+        if self.data is None and self.df_epoch is not None:
+            self.ax1.plot(self.df_epoch["Timestamp"], self.df_epoch["Wrist_SVM"],
+                          color='dodgerblue', label='Wrist')
+            self.ax2.plot(self.df_epoch["Timestamp"], self.df_epoch["Ankle_SVM"],
+                          color='red', label='Ankle')
+
         self.ax1.set_ylabel("SVM")
-
-        ax2.plot(x.df_svm["Timestamp"], x.df_svm["Ankle_SVM"], color='red', label='Ankle')
-        ax2.set_ylabel("SVM")
+        self.ax2.set_ylabel("SVM")
 
         xfmt = mdates.DateFormatter("%Y-%m-%d\n%H:%M:%S")
-        ax2.xaxis.set_major_formatter(xfmt)
+        self.ax2.xaxis.set_major_formatter(xfmt)
         plt.xticks(rotation=45, fontsize=8)
 
     def get_timestamps(self, event):
@@ -520,15 +612,63 @@ class DataVisualizer:
 
     def save_data(self, event):
 
-        df = pd.DataFrame(np.array(self.timestamps), columns=["Start", "Stop"])
-        df.to_excel(self.output_folder, index=True)
+        if os.path.exists(self.filename):
+            self.filename = self.filename.split(".")[0] + "Version2.xlsx"
+            self.data.activity_file = self.filename
 
-        print("\nSaving data to {}".format(self.output_folder))
+        df = pd.DataFrame(np.array(self.timestamps), columns=["Start", "Stop"])
+        df.insert(loc=0, column="Event", value=["NoName{}".format(i) for i in range(df.shape[0])])
+        df.to_excel(self.filename, index=False)
+
+        print("\nSaving data to {}".format(self.filename))
 
         plt.close('all')
 
 
-viz = DataVisualizer(output_folder="/Users/kyleweber/Desktop/Test.xlsx")
+# =====================================================================================================================
+# ============================================== STEP 0: DATA CONVERSION ==============================================
+# =====================================================================================================================
+
+
+# Full pathways to all GENEActiv files. Include '.bin'.
+# Filename must follow the structure used below with the underscores
+"""
+convert_files = [wrist_bin, ankle_bin]
+
+for file in convert_files:
+    ga_to_edf(input_file_path=file,
+              accelerometer_dir=save_folder,
+              temperature_dir="", light_dir="",
+              button_dir="", device_dir="",
+              device_edf=False, correct_drift=True, quiet=False)
+"""
+
+# =====================================================================================================================
+# ============================================ STEP 1: DATA VISUALIZATION =============================================
+# =====================================================================================================================
+
+# RUN THIS FIRST ---------------------------------------------------
+
+
+"""
+d = Data(wrist_file=wrist_edf,
+         ankle_file=ankle_edf,
+         ecg_3lead_file=lead_file, ecg_ff_file=ff_file,
+         activity_log=log_file,
+         epoch_len=15, pad_pre=15, pad_post=15)
+
+d.check_sync()
+d.import_data()
+d.epoch1s_accels()
+"""
+
+# file = "/Users/kyleweber/Desktop/OND05/OND05_SWP_1003_A_EpochedAccelerometer.csv"
+# subj = file.split("/")[-1][:16]
+file = None
+"""
+viz = DataVisualizer(data_obj=d, epoched_file=file,
+                     #output_filename="/Users/kyleweber/Desktop/OND05_Sleep/{}.xlsx".format(subj)
+                     output_filename="/Users/kyleweber/Desktop/Out.xlsx")
 ax_store = plt.axes([.9, .075, .07, .05])
 store_button = Button(ax_store, "Add")
 store_button.on_clicked(viz.get_timestamps)
@@ -538,15 +678,29 @@ save_button = Button(ax_save, "Done")
 save_button.on_clicked(viz.save_data)
 
 plt.show()
+"""
 
 
-subj_id = 3034
-x = Data(wrist_file="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_GA_LWrist_Accelerometer.EDF".format(str(subj_id)),
-         ankle_file="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_GA_LAnkle_Accelerometer.EDF".format(str(subj_id)),
-         ecg_file="/Users/kyleweber/Desktop/Data/OND07/EDF/OND07_WTL_{}_01_BF.EDF".format(str(subj_id)),
-         activity_log="/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/3034_LongWalks_Log.xlsx",
+# THEN RUN THIS -----------------------------------------------------
+
+"""
+d.import_activity_log()
+d.generate_activity_images(image_path=save_folder + "Event{}_{}.png")
+"""
+
+# =====================================================================================================================
+# ============================================== STEP 2: DATA PROCESSING ==============================================
+# =====================================================================================================================
+
+
+
+# wrist_file, ankle_file, and ecg_file are EDFs
+# activity_log is an Excel file (.xlsx)
+x = Data(wrist_file=wrist_edf,
+         ankle_file=ankle_edf,
+         ecg_3lead_file=lead_file, ecg_ff_file=ff_file,
+         activity_log=log_file,
          epoch_len=15)
-
 
 x.check_sync()
 x.import_data()
@@ -557,11 +711,12 @@ x.scale_cutpoints()
 x.process_activity_bouts(pad_pre=15, pad_post=300)
 x.calculate_accel_intensity()
 
-# x.find_resting_hr(rest_hr=57.8, window_size=60, n_windows=30)
-x.find_resting_hr(rest_hr=None, window_size=60, n_windows=30,
-                  sleep_log="/Users/kyleweber/Desktop/Student Superivision/Kin 472 - Megan/Sleep.xlsx")
-x.calculate_hrr(age=34)
+x.find_resting_hr(rest_hr=None, ecg_type="Lead")
+x.calculate_hrr(age=22, ecg_type='Lead')
 
-# x.plot_all_data(save_image=False)
-x.generate_activity_images(image_path="/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/{}_Event{}_{}.png")
-x.save_data(pathway="/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/")
+x.find_resting_hr(rest_hr=None, ecg_type="ff")
+x.calculate_hrr(age=22, ecg_type='ff')
+
+x.plot_all_data(x, save_image=False)
+# x.generate_activity_images(save_folder + "Event{}_{}.png")
+# x.save_data(pathway=save_folder)
