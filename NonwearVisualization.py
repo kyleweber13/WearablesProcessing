@@ -449,10 +449,265 @@ class Data:
         ax5.legend(loc='upper right')
 
 
-x = Data(subj_id=2891, location="LA", file_folder="/Users/kyleweber/Desktop/Temp Folder/",
-         log_file="/Users/kyleweber/Desktop/ReMiNDDNonWearReformatted_vt_25AUG2020.csv", study_code="OND06")
+# x = Data(subj_id=1027, location="LA",
+#          file_folder="/Volumes/nimbal$/Data/ReMiNDD/Release data/ONDRI/OND06_ALL_01_SNSR_GNAC_2020MAY31_DATAPKG",
+#          log_file="/Users/kyleweber/Desktop/ReMiNDDNonWearReformatted_GAgoldstandarddataset_23Dec2020_MinsToEnd.csv",
+#         study_code="OND06")
 # x.import_data()
 # x.plot_data()
 
 # x.df_all, x.df_all_temp = x.import_all_accels(timestamp=None, duration=60)
 # x.plot_all()
+
+
+class Data2:
+
+    def __init__(self, log_file, subj_id):
+
+        self.subj_id = subj_id
+        self.log_file = log_file
+
+        self.lw = None
+        self.lw_temp = None
+
+        self.rw = None
+        self.rw_temp = None
+
+        self.la = None
+        self.la_temp = None
+
+        self.ra = None
+        self.ra_temp = None
+
+        self.nw_log = None
+        self.df_all = None
+        self.df_all_temp = None
+
+    def import_data(self, accel_folder="", temp_folder="", accel_files="", temp_files=""):
+
+        self.nw_log = pd.read_csv(self.log_file)
+        self.nw_log = self.nw_log.loc[self.nw_log["ID"]==subj_id]
+
+        data_len = 100
+
+        # Left ankle -------------------------------------------------------------------------------------------------
+        if os.path.exists(accel_folder + accel_files.format(self.subj_id, "LAnkle")):
+            la = GENEActiv(filepath=accel_folder + accel_files.format(self.subj_id, "LAnkle"),
+                           load_raw=True, start_offset=0, end_offset=0)
+            la_time = la.timestamps
+            lax = la.x
+            lay = la.y
+            laz = la.z
+
+        if not os.path.exists(accel_folder + accel_files.format(self.subj_id, "LAnkle")):
+            print("-LAnkle file not found.")
+            la_time = [0 for i in range(data_len)]
+            lax = [0 for i in range(data_len)]
+            lay = [0 for i in range(data_len)]
+            laz = [0 for i in range(data_len)]
+
+        if os.path.exists(temp_folder + temp_files.format(self.subj_id, "LAnkle")):
+            la_temp = GENEActivTemperature(temp_folder + temp_files.format(self.subj_id, "LAnkle"),
+                                           start_offset=0, end_offset=0)
+
+            df = pd.DataFrame(list(zip(la_temp.timestamps, la_temp.temperature)), columns=["Time", "Temp"])
+
+            lat = df["Temp"]
+            la_temp_time = df["Time"]
+
+        if not os.path.exists(temp_folder + temp_files.format(self.subj_id, "LAnkle")):
+            print("-LAnkle temperature file not found.")
+            lat = [None for i in range(int(data_len/300))]
+            la_temp_time = [i for i in range(int(data_len/300))]
+
+        # Right ankle -------------------------------------------------------------------------------------------------
+        if os.path.exists(accel_folder + accel_files.format(self.subj_id, "RAnkle")):
+            ra = GENEActiv(filepath=accel_folder + accel_files.format(self.subj_id, "RAnkle"),
+                           load_raw=True, start_offset=0, end_offset=0)
+            ra_time = ra.timestamps
+            rax = ra.x
+            ray = ra.y
+            raz = ra.z
+
+        if not os.path.exists(accel_folder + accel_files.format(self.subj_id, "RAnkle")):
+            print("-RAnkle file not found.")
+            ra_time = [0 for i in range(data_len)]
+            rax = [0 for i in range(data_len)]
+            ray = [0 for i in range(data_len)]
+            raz = [0 for i in range(data_len)]
+
+        if os.path.exists(temp_folder + temp_files.format(self.subj_id, "RAnkle")):
+            ra_temp = GENEActivTemperature(filepath=temp_folder + temp_files.format(self.subj_id, "RAnkle"),
+                                           start_offset=0, end_offset=0)
+
+            df = pd.DataFrame(list(zip(ra_temp.timestamps, ra_temp.temperature)), columns=["Time", "Temp"])
+
+            rat = df["Temp"]
+            ra_temp_time = df["Time"]
+
+        if not os.path.exists(temp_folder + temp_files.format(self.subj_id, "RAnkle")):
+            print("-RAnkle temperature file not found.")
+            rat = [0 for i in range(int(data_len / 300))]
+            ra_temp_time = [None for i in range(int(data_len / 300))]
+
+        # Left wrist --------------------------------------------------------------------------------------------------
+        if os.path.exists(accel_folder + accel_files.format(self.subj_id, "LWrist")):
+            lw = GENEActiv(filepath=accel_folder + accel_files.format(self.subj_id, "LWrist"),
+                           load_raw=True, start_offset=0, end_offset=0)
+            lw_time = lw.timestamps
+            lwx = lw.x
+            lwy = lw.y
+            lwz = lw.z
+
+        if not os.path.exists(accel_folder + accel_files.format(self.subj_id, "LWrist")):
+            print("-LWrist file not found.")
+            lw_time = [0 for i in range(data_len)]
+            lwx = [0 for i in range(data_len)]
+            lwy = [0 for i in range(data_len)]
+            lwz = [0 for i in range(data_len)]
+
+        if os.path.exists(temp_folder + temp_files.format(self.subj_id, "LWrist")):
+            lw_temp = GENEActivTemperature(filepath=temp_folder + temp_files.format(self.subj_id, "LWrist"),
+                                           start_offset=0, end_offset=0)
+
+            df = pd.DataFrame(list(zip(lw_temp.timestamps, lw_temp.temperature)), columns=["Time", "Temp"])
+
+            lwt = df["Temp"]
+            lw_temp_time = df["Time"]
+
+        if not os.path.exists(temp_folder + temp_files.format(self.subj_id, "LWrist")):
+            print("-LWrist temperature file not found.")
+            lwt = [0 for i in range(int(data_len / 300))]
+            lw_temp_time = [None for i in range(int(data_len / 300))]
+
+        # Right wrist -------------------------------------------------------------------------------------------------
+        if os.path.exists(accel_folder + accel_files.format(self.subj_id, "RWrist")):
+            rw = GENEActiv(filepath=accel_folder + accel_files.format(self.subj_id, "RWrist"),
+                           load_raw=True, start_offset=0, end_offset=0)
+            rw_time = rw.timestamps
+            rwx = rw.x
+            rwy = rw.y
+            rwz = rw.z
+
+        if not os.path.exists(accel_folder + accel_files.format(self.subj_id, "RWrist")):
+            print("-RWrist file not found.")
+            rw_time = [0 for i in range(data_len)]
+            rwx = [0 for i in range(data_len)]
+            rwy = [0 for i in range(data_len)]
+            rwz = [0 for i in range(data_len)]
+
+        if os.path.exists(temp_folder + temp_files.format(self.subj_id, "RWrist")):
+            rw_temp = GENEActivTemperature(filepath=temp_folder + temp_files.format(self.subj_id, "RWrist"),
+                                           start_offset=0, end_offset=0)
+
+            df = pd.DataFrame(list(zip(rw_temp.timestamps, rw_temp.temperature)), columns=["Time", "Temp"])
+
+            rwt = df["Temp"]
+            rw_temp_time = df["Time"]
+
+        if not os.path.exists(temp_folder + temp_files.format(self.subj_id, "LWrist")):
+            print("-RWrist temperature file not found.")
+            rwt = [0 for i in range(int(data_len / 300))]
+            rw_temp_time = [None for i in range(int(data_len / 300))]
+
+        # Combining data ----------------------------------------------------------------------------------------------
+        df = pd.DataFrame(list(zip(la_time, lax, lay, laz,
+                                   ra_time, rax, ray, raz,
+                                   lw_time, lwx, lwy, lwz,
+                                   rw_time, rwx, rwy, rwz)),
+                          columns=["LA_time", "LA_x", "LA_y", "LA_z",
+                                   "RA_time", "RA_x", "RA_y", "RA_z",
+                                   "LW_time", "LW_x", "LW_y", "LW_z",
+                                   "RW_time", "RW_x", "RW_y", "RW_z"])
+
+        df_temp = pd.DataFrame(list(zip(la_temp_time, lat,
+                                        ra_temp_time, rat,
+                                        lw_temp_time, lwt,
+                                        rw_temp_time, rwt)),
+                               columns=["LA_time", "LA_temp", "RA_time", "RA_temp",
+                                        "LW_time", "LW_temp", "RW_time", "RW_temp"])
+
+        return df, df_temp
+
+    def plot_all(self, downsample=3):
+        """Plots all available data from specified time period. Shades nonwear periods."""
+
+        plt.close("all")
+
+        log = self.nw_log
+
+        fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, sharex='col', figsize=(10, 8))
+        plt.suptitle("Participant {}".format(self.subj_id))
+
+        ax1.set_title("Shaded areas: green = confident, red = not confident")
+        ax1.plot(self.df_all["LA_time"].iloc[::downsample], self.df_all["LA_x"].iloc[::downsample], color='black')
+        ax1.plot(self.df_all["LA_time"].iloc[::downsample], self.df_all["LA_y"].iloc[::downsample], color='grey')
+        ax1.set_ylabel("Left ankle (G)")
+
+        ax2.plot(self.df_all["RA_time"].iloc[::downsample], self.df_all["RA_x"].iloc[::downsample], color='black')
+        ax2.plot(self.df_all["RA_time"].iloc[::downsample], self.df_all["RA_y"].iloc[::downsample], color='dodgerblue')
+        ax2.set_ylabel("Right ankle (G)")
+
+        ax3.plot(self.df_all["LW_time"].iloc[::downsample], self.df_all["LW_x"].iloc[::downsample], color='black')
+        ax3.plot(self.df_all["LW_time"].iloc[::downsample], self.df_all["LW_y"].iloc[::downsample], color='green')
+        ax3.set_ylabel("Left wrist (G)")
+
+        ax4.plot(self.df_all["RW_time"].iloc[::downsample], self.df_all["RW_x"].iloc[::downsample], color='black')
+        ax4.plot(self.df_all["RW_time"].iloc[::downsample], self.df_all["RW_y"].iloc[::downsample], color='red')
+        ax4.set_ylabel("Right wrist (G)")
+
+        ax5.plot(self.df_all_temp["LA_time"], self.df_all_temp["LA_temp"], color='grey', label='LA')
+        ax5.plot(self.df_all_temp["RA_time"], self.df_all_temp["RA_temp"], color='dodgerblue', label='RA')
+        ax5.plot(self.df_all_temp["LW_time"], self.df_all_temp["LW_temp"], color='green', label='LW')
+        ax5.plot(self.df_all_temp["RW_time"], self.df_all_temp["RW_temp"], color='red', label='RW')
+        ax5.set_ylabel("ºC")
+
+        xfmt = mdates.DateFormatter("%H:%M:%S")
+        ax5.xaxis.set_major_formatter(xfmt)
+        plt.xticks(rotation=45, fontsize=8)
+        ax5.set_ylim(18, 36)
+
+        for i in range(log.shape[0]):
+
+            # Left ankle -----------------------------
+            if log.iloc[i]["location"] == "LA":
+                label = "csv row " + str(log.iloc[i].name + 2)
+
+                ax1.fill_betweenx(x1=log.iloc[i]["start_time"], x2=log.iloc[i]["end_time"], y=ax1.get_ylim(),
+                                  color='green', alpha=.25, label=label)
+
+            # Right ankle ----------------------------
+            if log.iloc[i]["location"] == "RA":
+                label = "csv row " + str(log.iloc[i].name + 2)
+
+                ax2.fill_betweenx(x1=log.iloc[i]["start_time"], x2=log.iloc[i]["end_time"], y=ax2.get_ylim(),
+                                  color='green', alpha=.25, label=label)
+
+            # Left wrist ----------------------------
+            if log.iloc[i]["location"] == "LW":
+                label = "csv row " + str(log.iloc[i].name + 2)
+
+                ax3.fill_betweenx(x1=log.iloc[i]["start_time"], x2=log.iloc[i]["end_time"], y=ax3.get_ylim(),
+                                  color='green', alpha=.25, label=label)
+
+            # Right wrist ----------------------------
+            if log.iloc[i]["location"] == "RW":
+                label = "csv row " + str(log.iloc[i].name + 2)
+
+                ax4.fill_betweenx(x1=log.iloc[i]["start_time"], x2=log.iloc[i]["end_time"], y=ax4.get_ylim(),
+                                  color='green', alpha=.25, label=label)
+
+        ax1.legend(loc='upper right')
+        ax2.legend(loc='upper right')
+        ax3.legend(loc='upper right')
+        ax4.legend(loc='upper right')
+        ax5.legend(loc='upper right')
+
+# [2530, 2707, 2891, 3183m 3413]
+subj_id = "1027"
+x = Data2(log_file="/Users/kyleweber/Desktop/ReMiNDDNonWearReformatted_GAgoldstandarddataset_23Dec2020_MinsToEnd.csv",
+          subj_id=subj_id)
+x.df_all, x.df_all_temp = x.import_data(accel_folder="/Volumes/nimbal$/Data/ReMiNDD/Release data/ONDRI/OND06_ALL_01_SNSR_GNAC_2020MAY31_DATAPKG/Accelerometer/DATAFILES/",
+                                        temp_folder="/Volumes/nimbal$/Data/ReMiNDD/Release data/ONDRI/OND06_ALL_01_SNSR_GNAC_2020MAY31_DATAPKG/Temperature/DATAFILES/",
+                                        accel_files="OND06_SBH_{}_GNAC_ACCELEROMETER_{}.edf",
+                                        temp_files="OND06_SBH_{}_GNAC_TEMPERATURE_{}.edf")
