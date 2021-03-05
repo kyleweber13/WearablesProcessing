@@ -8,14 +8,14 @@ from datetime import timedelta
 import matplotlib.dates as mdates
 import os
 from OndriAtHome.BintoEDFConversion.ga_to_edf import ga_to_edf
+import datetime
 
 save_folder = "/Users/kyleweber/Desktop/Converted/"
-log_file = "/Users/kyleweber/Desktop/Out.xlsx"
-
-wrist_edf = "/Users/kyleweber/Desktop/Kin472_Megan/Converted/Run_GENEActiv_Accelerometer_LW.edf"
-ankle_edf = "/Users/kyleweber/Desktop/Kin472_Megan/Converted/Run_GENEActiv_Accelerometer_LA.edf"
-lead_file = "/Users/kyleweber/Desktop/Kin472_Megan/Converted/Run_3lead.edf"
-ff_file = "/Users/kyleweber/Desktop/Kin472_Megan/Converted/Run_FastFix.edf"
+log_file = "/Users/kyleweber/Desktop/Log.xlsx"
+wrist_edf = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/Run_GENEActiv_Accelerometer_LW.edf"
+ankle_edf = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/Run_GENEActiv_Accelerometer_LA.edf"
+lead_file = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/Run_3lead.edf"
+ff_file = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/Run_FastFix.edf"
 
 
 class Data:
@@ -147,13 +147,41 @@ class Data:
                                    columns=["Timestamp", "Wrist_SVM", "Ankle_SVM"])
 
     def import_activity_log(self):
-        """Imports activity log."""
+        """Imports activity log.
+        Input timestamps are HH:MM:SS into collection period -> converts to real timestamps if necessary OR
+        actual timestamps (no conversion)
+        """
 
         print("\nImporting activity log...")
         self.df_events = pd.read_excel(self.activity_file)
 
-        self.df_events["Start"] = pd.to_datetime(self.df_events["Start"])
-        self.df_events["Stop"] = pd.to_datetime(self.df_events["Stop"])
+        if type(self.df_events["Start"].iloc[0]) is datetime.time:
+            start_stamp = self.df_svm['Timestamp'].iloc[0]
+
+            self.df_events["Start"] = [str(i) for i in self.df_events["Start"]]
+            self.df_events["Stop"] = [str(i) for i in self.df_events["Stop"]]
+
+            starts = []
+            stops = []
+            for row in self.df_events.itertuples():
+                start = start_stamp + \
+                        timedelta(hours=int(row.Start.split(":")[0])) + \
+                        timedelta(minutes=int(row.Start.split(":")[1])) + \
+                        timedelta(seconds=int(row.Start.split(":")[2]))
+                starts.append(start)
+
+                stop = start_stamp + \
+                       timedelta(hours=int(row.Stop.split(":")[0])) + \
+                       timedelta(minutes=int(row.Stop.split(":")[1])) + \
+                       timedelta(seconds=int(row.Stop.split(":")[2]))
+                stops.append(stop)
+
+            self.df_events["Start"] = pd.to_datetime(starts)
+            self.df_events["Stop"] = pd.to_datetime(stops)
+
+        if type(self.df_events["Start"].iloc[0]) is not datetime.date:
+            self.df_events["Start"] = pd.to_datetime(self.df_events["Start"])
+            self.df_events["Stop"] = pd.to_datetime(self.df_events["Stop"])
 
         if self.df_events.shape[0] == 0:
             print("-No activities found.")
@@ -569,6 +597,8 @@ class DataVisualizer:
         if epoched_file is not None:
             self.df_epoch = pd.read_csv(epoched_file)
             self.df_epoch["Timestamp"] = pd.to_datetime(self.df_epoch["Timestamp"])
+            self.df_epoch["Timestamp"] = pd.date_range(start=self.df_epoch["Timestamp"].iloc[0],
+                                                       freq="1S", periods=self.df_epoch.shape[0])
             self.df_epoch.columns = ["Timestamp", "Wrist_SVM", "Wrist_AVM", "Ankle_SVM", "Ankle_AVM", "WristIntensity"]
 
         self.filename = output_filename
@@ -662,12 +692,14 @@ d.import_data()
 d.epoch1s_accels()
 """
 
-# file = "/Users/kyleweber/Desktop/OND05/OND05_SWP_1003_A_EpochedAccelerometer.csv"
-# subj = file.split("/")[-1][:16]
-file = None
 """
-viz = DataVisualizer(data_obj=d, epoched_file=file,
-                     #output_filename="/Users/kyleweber/Desktop/OND05_Sleep/{}.xlsx".format(subj)
+d = Data(wrist_file=wrist_edf,
+         ankle_file=ankle_edf,
+         ecg_3lead_file=lead_file, ecg_ff_file=ff_file,
+         activity_log=log_file,
+         epoch_len=15, pad_pre=15, pad_post=15)
+
+viz = DataVisualizer(data_obj=d, epoched_file=None,
                      output_filename="/Users/kyleweber/Desktop/Out.xlsx")
 ax_store = plt.axes([.9, .075, .07, .05])
 store_button = Button(ax_store, "Add")
@@ -680,7 +712,6 @@ save_button.on_clicked(viz.save_data)
 plt.show()
 """
 
-
 # THEN RUN THIS -----------------------------------------------------
 
 """
@@ -692,8 +723,7 @@ d.generate_activity_images(image_path=save_folder + "Event{}_{}.png")
 # ============================================== STEP 2: DATA PROCESSING ==============================================
 # =====================================================================================================================
 
-
-
+"""
 # wrist_file, ankle_file, and ecg_file are EDFs
 # activity_log is an Excel file (.xlsx)
 x = Data(wrist_file=wrist_edf,
@@ -704,19 +734,21 @@ x = Data(wrist_file=wrist_edf,
 
 x.check_sync()
 x.import_data()
-x.import_activity_log()
 x.epoch1s_accels()
+x.import_activity_log()
+
 x.scale_cutpoints()
 
 x.process_activity_bouts(pad_pre=15, pad_post=300)
 x.calculate_accel_intensity()
 
-x.find_resting_hr(rest_hr=None, ecg_type="Lead")
+x.find_resting_hr(rest_hr=60, ecg_type="Lead")
 x.calculate_hrr(age=22, ecg_type='Lead')
 
-x.find_resting_hr(rest_hr=None, ecg_type="ff")
+x.find_resting_hr(rest_hr=60, ecg_type="ff")
 x.calculate_hrr(age=22, ecg_type='ff')
 
 x.plot_all_data(x, save_image=False)
 # x.generate_activity_images(save_folder + "Event{}_{}.png")
 # x.save_data(pathway=save_folder)
+"""
