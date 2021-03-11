@@ -9,13 +9,17 @@ import matplotlib.dates as mdates
 import os
 from OndriAtHome.BintoEDFConversion.ga_to_edf import ga_to_edf
 import datetime
+from Filtering import filter_signal
 
-save_folder = "/Users/kyleweber/Desktop/Converted/"
-log_file = "/Users/kyleweber/Desktop/Log.xlsx"
-wrist_edf = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/Run_GENEActiv_Accelerometer_LW.edf"
-ankle_edf = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/Run_GENEActiv_Accelerometer_LA.edf"
-lead_file = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/Run_3lead.edf"
-ff_file = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/Run_FastFix.edf"
+collection = "1"
+activity = "Run"
+data_folder = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/Converted/"
+save_folder = data_folder
+log_file = data_folder + "Collection {}/EventLog{}_{}.xlsx".format(collection, collection, activity)
+wrist_edf = data_folder + "Collection {}/{}_GENEActiv_Accelerometer_0{}_LW.edf".format(collection, activity, collection)
+ankle_edf = data_folder + "Collection {}/{}_GENEActiv_Accelerometer_0{}_LA.edf".format(collection, activity, collection)
+lead_file = data_folder + "Collection {}/3Lead{}{}.edf".format(collection, activity, collection)
+ff_file = data_folder + "Collection {}/FastFix{}{}.edf".format(collection, activity, collection)
 
 
 class Data:
@@ -109,10 +113,13 @@ class Data:
             self.ecg_lead = ImportEDF.Bittium(filepath=self.ecg_lead_file, load_accel=False,
                                               start_offset=self.crop_dict["ECG_Lead"],
                                               epoch_len=self.epoch_len)
+            self.ecg_lead.electrode_type = "Three Lead"
+
         if self.ecg_ff_file is not None:
             self.ecg_ff = ImportEDF.Bittium(filepath=self.ecg_ff_file, load_accel=False,
                                             start_offset=self.crop_dict["ECG_FF"],
                                             epoch_len=self.epoch_len)
+            self.ecg_ff.electrode_type = "FastFix"
 
     def scale_cutpoints(self):
         """Scales Duncan et al. (2019) accelerometer cutpoints based on epoch length and sampling rate"""
@@ -155,33 +162,34 @@ class Data:
         print("\nImporting activity log...")
         self.df_events = pd.read_excel(self.activity_file)
 
-        if type(self.df_events["Start"].iloc[0]) is datetime.time:
-            start_stamp = self.df_svm['Timestamp'].iloc[0]
+        if self.df_events.shape[0] != 0:
+            if type(self.df_events["Start"].iloc[0]) is datetime.time:
+                start_stamp = self.df_svm['Timestamp'].iloc[0]
 
-            self.df_events["Start"] = [str(i) for i in self.df_events["Start"]]
-            self.df_events["Stop"] = [str(i) for i in self.df_events["Stop"]]
+                self.df_events["Start"] = [str(i) for i in self.df_events["Start"]]
+                self.df_events["Stop"] = [str(i) for i in self.df_events["Stop"]]
 
-            starts = []
-            stops = []
-            for row in self.df_events.itertuples():
-                start = start_stamp + \
-                        timedelta(hours=int(row.Start.split(":")[0])) + \
-                        timedelta(minutes=int(row.Start.split(":")[1])) + \
-                        timedelta(seconds=int(row.Start.split(":")[2]))
-                starts.append(start)
+                starts = []
+                stops = []
+                for row in self.df_events.itertuples():
+                    start = start_stamp + \
+                            timedelta(hours=int(row.Start.split(":")[0])) + \
+                            timedelta(minutes=int(row.Start.split(":")[1])) + \
+                            timedelta(seconds=int(row.Start.split(":")[2]))
+                    starts.append(start)
 
-                stop = start_stamp + \
-                       timedelta(hours=int(row.Stop.split(":")[0])) + \
-                       timedelta(minutes=int(row.Stop.split(":")[1])) + \
-                       timedelta(seconds=int(row.Stop.split(":")[2]))
-                stops.append(stop)
+                    stop = start_stamp + \
+                           timedelta(hours=int(row.Stop.split(":")[0])) + \
+                           timedelta(minutes=int(row.Stop.split(":")[1])) + \
+                           timedelta(seconds=int(row.Stop.split(":")[2]))
+                    stops.append(stop)
 
-            self.df_events["Start"] = pd.to_datetime(starts)
-            self.df_events["Stop"] = pd.to_datetime(stops)
+                self.df_events["Start"] = pd.to_datetime(starts)
+                self.df_events["Stop"] = pd.to_datetime(stops)
 
-        if type(self.df_events["Start"].iloc[0]) is not datetime.date:
-            self.df_events["Start"] = pd.to_datetime(self.df_events["Start"])
-            self.df_events["Stop"] = pd.to_datetime(self.df_events["Stop"])
+            if type(self.df_events["Start"].iloc[0]) is not datetime.date:
+                self.df_events["Start"] = pd.to_datetime(self.df_events["Start"])
+                self.df_events["Stop"] = pd.to_datetime(self.df_events["Stop"])
 
         if self.df_events.shape[0] == 0:
             print("-No activities found.")
@@ -218,6 +226,11 @@ class Data:
             bout_end = int((bout.Stop + timedelta(seconds=pad_post) -
                             self.ecg_lead.timestamps[0]).total_seconds() * self.ecg_lead.sample_rate)
 
+            if bout.Start + timedelta(seconds=-pad_pre) <= self.ecg_lead.timestamps[0]:
+                bout_start = int((bout.Start - self.ecg_lead.timestamps[0]).total_seconds() * self.ecg_lead.sample_rate)
+            if bout.Stop + timedelta(seconds=pad_post) >= self.ecg_lead.timestamps[-1]:
+                bout_end = int((bout.Stop - self.ecg_lead.timestamps[0]).total_seconds() * self.ecg_lead.sample_rate)
+
             for i in range(bout_start, bout_end, int(self.ecg_lead.sample_rate * self.epoch_len)):
                 qc = ECG.CheckQuality(raw_data=self.ecg_lead.raw, start_index=i, template_data='filtered',
                                       voltage_thresh=250, epoch_len=self.epoch_len,
@@ -234,6 +247,9 @@ class Data:
 
             bout_end = int((bout.Stop + timedelta(seconds=pad_post) -
                             self.ecg_ff.timestamps[0]).total_seconds() * self.ecg_ff.sample_rate)
+
+            if bout.Stop + timedelta(seconds=pad_post) >= self.ecg_ff.timestamps[-1]:
+                bout_end = len(self.ecg_ff.timestamps)
 
             for i in range(bout_start, bout_end, int(self.ecg_ff.sample_rate * self.epoch_len)):
                 qc = ECG.CheckQuality(raw_data=self.ecg_ff.raw, start_index=i, template_data='filtered',
@@ -659,10 +675,12 @@ class DataVisualizer:
 # ============================================== STEP 0: DATA CONVERSION ==============================================
 # =====================================================================================================================
 
-
+"""
 # Full pathways to all GENEActiv files. Include '.bin'.
 # Filename must follow the structure used below with the underscores
-"""
+wrist_bin = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/HIIT_GA_002_01_LW.bin"
+ankle_bin = "/Users/kyleweber/Desktop/Student Supervision/Kin 472 - Megan/Data/HIIT_GA_002_01_LA.bin"
+
 convert_files = [wrist_bin, ankle_bin]
 
 for file in convert_files:
@@ -714,16 +732,16 @@ plt.show()
 
 # THEN RUN THIS -----------------------------------------------------
 
-"""
-d.import_activity_log()
-d.generate_activity_images(image_path=save_folder + "Event{}_{}.png")
-"""
+
+# d.import_activity_log()
+# d.generate_activity_images(image_path=save_folder + "Event{}_{}.png")
+
 
 # =====================================================================================================================
 # ============================================== STEP 2: DATA PROCESSING ==============================================
 # =====================================================================================================================
 
-"""
+
 # wrist_file, ankle_file, and ecg_file are EDFs
 # activity_log is an Excel file (.xlsx)
 x = Data(wrist_file=wrist_edf,
@@ -737,18 +755,233 @@ x.import_data()
 x.epoch1s_accels()
 x.import_activity_log()
 
-x.scale_cutpoints()
+# x.scale_cutpoints()
 
-x.process_activity_bouts(pad_pre=15, pad_post=300)
-x.calculate_accel_intensity()
+# x.process_activity_bouts(pad_pre=15, pad_post=15)
+# x.calculate_accel_intensity()
 
-x.find_resting_hr(rest_hr=60, ecg_type="Lead")
-x.calculate_hrr(age=22, ecg_type='Lead')
+# x.find_resting_hr(rest_hr=60, ecg_type="Lead")
+# x.calculate_hrr(age=22, ecg_type='Lead')
 
-x.find_resting_hr(rest_hr=60, ecg_type="ff")
-x.calculate_hrr(age=22, ecg_type='ff')
+# x.find_resting_hr(rest_hr=60, ecg_type="ff")
+# x.calculate_hrr(age=22, ecg_type='ff')
 
-x.plot_all_data(x, save_image=False)
+# x.plot_all_data(x, save_image=False)
 # x.generate_activity_images(save_folder + "Event{}_{}.png")
 # x.save_data(pathway=save_folder)
-"""
+
+
+def check_ecg_peaks(data, roll_avg=10, epoch_len=15, show_plot=True):
+
+    # Runs QC check and epoch HR on valid epochs ---------------------------------------------------------------------
+    epoch_hr = []
+    for i in range(0, len(data.raw) - int(data.sample_rate * epoch_len), int(data.sample_rate * epoch_len)):
+        qc = ECG.CheckQuality(raw_data=data.raw, start_index=i, template_data='filtered',
+                              voltage_thresh=250, epoch_len=epoch_len,
+                              sample_rate=data.sample_rate)
+
+        if qc.valid_period:
+            epoch_hr.append(qc.hr)
+        if not qc.valid_period:
+            epoch_hr.append(None)
+
+    # Finds all peaks using wavelet transformation --------------------------------------------------------------------
+    e = ECG.DetectAllPeaks(data=data.raw, sample_rate=data.sample_rate, algorithm="wavelet")
+    e.detect_peaks()
+
+    # Calculates beat-to-beat HR without QC check ---------------------------------------------------------------------
+    rr = []
+    inst_hr = []
+    for p1, p2 in zip(e.r_peaks[:], e.r_peaks[1:]):
+        r = (p2-p1)/data.sample_rate
+        rr.append(r)
+        inst_hr.append(60/r)
+
+    # Calculates average HR in epochs without QC check ----------------------------------------------------------------
+    df_inst = pd.DataFrame([[data.timestamps[i] for i in e.r_peaks[:-1]], inst_hr]).transpose()
+    df_inst.columns = ["Timestamp", "InstHR"]
+
+    event_name = []
+
+    for row in df_inst.itertuples():
+        label_found = False
+
+        for event in x.df_events.itertuples():
+
+            if event.Start <= row.Timestamp < event.Stop:
+                event_name.append(event.Event)
+                label_found = True
+                break
+
+        if not label_found:
+            event_name.append("Nothing")
+
+    df_inst["Event"] = event_name
+
+    epochs = pd.date_range(start=df_inst.iloc[0]["Timestamp"].round("{}S".format(epoch_len)),
+                           end=df_inst.iloc[-1]["Timestamp"].round("{}S".format(epoch_len)),
+                           freq='{}S'.format(epoch_len))
+
+    avg_hr = []
+    for epoch1, epoch2 in zip(epochs[:], epochs[1:]):
+        d = df_inst.loc[(df_inst["Timestamp"] >= epoch1) & (df_inst["Timestamp"] < epoch2)]
+        avg_hr.append(d["InstHR"].mean())
+    epochs = epochs[:-1]
+
+    df_avg = pd.DataFrame([epochs, avg_hr]).transpose()
+    df_avg.columns = ["Timestamp", "AvgHR"]
+
+    event_name = []
+
+    for row in df_avg.itertuples():
+        label_found = False
+
+        for event in x.df_events.itertuples():
+
+            if event.Start <= row.Timestamp < event.Stop:
+                event_name.append(event.Event)
+                label_found = True
+                break
+
+        if not label_found:
+            event_name.append("Nothing")
+
+    df_avg["Event"] = event_name
+
+    # Epoch (valid only) df
+    df_epoch = pd.DataFrame([data.timestamps[::int(data.sample_rate * epoch_len)][:len(epoch_hr)],
+                             epoch_hr]).transpose()
+    df_epoch.columns = ["Timestamp", "AvgHR"]
+
+    event_name = []
+
+    for row in df_epoch.itertuples():
+        label_found = False
+
+        for event in x.df_events.itertuples():
+
+            if event.Start <= row.Timestamp < event.Stop:
+                event_name.append(event.Event)
+                label_found = True
+                break
+
+        if not label_found:
+            event_name.append("Nothing")
+
+    df_epoch["Event"] = event_name
+
+    # PLOTTING --------------------------------------------------------------------------------------------------------
+
+    if show_plot:
+        fig, axes = plt.subplots(3, sharex='col', figsize=(10, 7))
+        plt.subplots_adjust(hspace=.33)
+        plt.suptitle("{}{} - {} Data".format(activity, collection, data.electrode_type))
+
+        axes[0].plot(data.timestamps, filter_signal(data.raw, filter_type="highpass", high_f=.25,
+                                                    sample_f=data.sample_rate),
+                     color='red', label="HP Filter")
+        axes[0].set_title("ECG")
+        axes[0].set_ylabel("Voltage", color='red')
+        axes[0].tick_params(axis="y", colors='red')
+
+        ax2 = axes[0].twinx()
+
+        try:
+            ax2.plot(data.timestamps, e.filt_squared[:len(data.timestamps)], color='black', label="Processed")
+            ax2.plot([data.timestamps[i] for i in e.r_peaks], [e.filt_squared[i] for i in e.r_peaks],
+                     linestyle="", marker="o", color='green', markersize=5, label="Peaks")
+        except TypeError:
+            pass
+        ax2.set_ylabel("Meaningless unit")
+        ax2.set_yticks([])
+        axes[0].legend(loc='upper left')
+        ax2.legend(loc='upper right')
+
+        axes[1].set_ylabel("HR (bpm)")
+        axes[1].set_title("Beat-by-beat HR")
+        axes[1].plot([data.timestamps[i] for i in e.r_peaks[:-1]], inst_hr, color='dodgerblue', label="Beat-to-beat",
+                     marker="s", markerfacecolor='dodgerblue', markersize=3, linewidth=2)
+
+        axes[2].set_title("Epoched HR")
+
+        axes[2].plot([data.timestamps[i] for i in e.r_peaks[:-roll_avg - 1]],
+                     [sum(inst_hr[i:i+roll_avg])/roll_avg for i in range(len(inst_hr)-roll_avg)], color='black',
+                     label="{} beat avg".format(roll_avg), marker="^", markerfacecolor='black', markersize=3)
+
+        for i in range(len(epoch_hr)):
+            axes[2].plot([data.timestamps[int(i*data.sample_rate * epoch_len)],
+                          data.timestamps[int(i*data.sample_rate * epoch_len)]],
+                         [epoch_hr[i], epoch_hr[i]], color='#e67300')
+
+        axes[2].plot(data.timestamps[::int(data.sample_rate * epoch_len)][:len(epoch_hr)], epoch_hr, markersize=3,
+                     color='limegreen', label="{}s epoch (valid)".format(epoch_len), marker="o", markerfacecolor="limegreen")
+
+        axes[2].plot(df_avg["Timestamp"], df_avg["AvgHR"], markersize=4,
+                     color='darkgrey', label="{}s epoch (all)".format(epoch_len), marker="x", markerfacecolor="darkgray")
+
+        axes[2].legend()
+        axes[2].set_ylabel("HR (bpm)")
+
+        xfmt = mdates.DateFormatter("%H:%M:%S")
+        axes[-1].xaxis.set_major_formatter(xfmt)
+
+    return e, df_inst, df_avg, df_epoch
+
+
+ff_ecg, ff_df_inst, ff_df_avg, ff_df_epoch = check_ecg_peaks(data=x.ecg_ff, roll_avg=10,
+                                                             epoch_len=15, show_plot=False)
+lead_ecg, lead_df_inst, lead_df_avg, lead_df_epoch = check_ecg_peaks(data=x.ecg_lead, roll_avg=10,
+                                                                     epoch_len=15, show_plot=False)
+
+
+def compare_electrodes(label_events=True):
+
+    fig, axes = plt.subplots(3, sharex='col', figsize=(10, 7))
+    plt.subplots_adjust(hspace=.3)
+    plt.suptitle("{}{} - Electrode Comparison".format(activity, collection))
+
+    axes[0].plot(ff_df_inst["Timestamp"], ff_df_inst["InstHR"], color='red', label="FF")
+    axes[0].plot(lead_df_inst["Timestamp"], lead_df_inst["InstHR"], color='dodgerblue', label="3L")
+    axes[0].legend()
+    axes[0].set_title("Beat-by-beat HR (All Peaks)")
+    axes[0].set_ylabel("HR")
+
+    axes[1].plot(ff_df_avg.dropna()["Timestamp"], ff_df_avg.dropna()["AvgHR"], color='red', label="FF")
+    axes[1].plot(lead_df_avg.dropna()["Timestamp"], lead_df_avg.dropna()["AvgHR"], color='dodgerblue', label="3L")
+    axes[1].set_title("Rolling Avg (Valid/Invalid)")
+    axes[1].set_ylabel("HR")
+
+    axes[2].plot(ff_df_epoch.dropna()["Timestamp"], ff_df_epoch.dropna()["AvgHR"],
+                 color='red', marker="o", markersize=4)
+    axes[2].plot(lead_df_epoch.dropna()["Timestamp"], lead_df_epoch.dropna()["AvgHR"],
+                 color='dodgerblue', marker="s", markersize=3)
+    axes[2].set_title("Epoch HR (Valid Only)")
+    axes[2].set_ylabel("HR")
+
+    xfmt = mdates.DateFormatter("%H:%M:%S")
+    axes[-1].xaxis.set_major_formatter(xfmt)
+
+    ylims0 = axes[0].get_ylim()
+    ylims1 = axes[1].get_ylim()
+    ylims2 = axes[2].get_ylim()
+
+    for row in x.df_events.itertuples():
+
+        axes[0].fill_between(x=[row.Start, row.Stop], y1=ylims0[0], y2=ylims0[1],
+                             color='dimgrey' if row.Index % 2 == 0 else 'darkgray', alpha=.5)
+        axes[1].fill_between(x=[row.Start, row.Stop], y1=ylims1[0], y2=ylims1[1],
+                             color='dimgrey' if row.Index % 2 == 0 else 'darkgray', alpha=.5)
+        axes[2].fill_between(x=[row.Start, row.Stop], y1=ylims2[0], y2=ylims2[1],
+                             color='dimgrey' if row.Index % 2 == 0 else 'darkgray', alpha=.5)
+
+        if label_events:
+            axes[0].text(x=row.Start + (row.Stop - row.Start) / 10,
+                         y=ylims0[0]*.9, s=row.Event)
+
+
+compare_electrodes(label_events=False)
+
+
+# TODO
+# Figure out how to deal with bad data
+# Processing events
